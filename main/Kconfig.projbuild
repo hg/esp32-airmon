@@ -1,4 +1,4 @@
-menu "airmon Configuration"
+menu "airmon configuration"
 
 config TEMPERATURE_PERIOD_SECONDS
 	int "Temperature measurement period, seconds"
@@ -9,5 +9,17 @@ config TEMPERATURE_KEEP_HOURS
 	int "How many hours of temperature measurements to keep in queue"
 	range 1 24
 	default 3
+
+config WIFI_SSID
+	string "WiFi SSID"
+	default "myssid"
+	help
+		SSID (network name) to connect to
+
+config WIFI_PASSWORD
+	string "WiFi Password"
+	default "mypassword"
+	help
+		WiFi password (WPA or WPA2) to use
 endmenu
 
