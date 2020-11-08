@@ -5,10 +5,15 @@ config TEMPERATURE_PERIOD_SECONDS
 	range 1 3600
 	default 15
 
-config TEMPERATURE_KEEP_HOURS
-	int "How many hours of temperature measurements to keep in queue"
-	range 1 24
-	default 3
+config PARTICULATE_PERIOD_SECONDS
+	int "Particulate measurement period, seconds"
+	range 1 86400
+	default 900
+
+config MEASUREMENT_QUEUE_SIZE
+	int "How many temperature & particulate measurements to keep in queue"
+	range 1 10000
+	default 500
 
 config WIFI_SSID
 	string "WiFi SSID"

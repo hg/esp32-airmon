@@ -4,7 +4,6 @@
 #include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
-#include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -50,11 +49,7 @@ static sensor_config temp_sensors[] = {
     // {"street", 12, RMT_CHANNEL_2, RMT_CHANNEL_3, NULL},
 };
 
-typedef enum { Connected = BIT0, Disconnected = BIT1 } wifi_event_bit;
-
 static const int64_t kMicrosecondsPerSecond = 1000 * 1000;
-
-static const int kSensorResolution = (DS18B20_RESOLUTION_12_BIT);
 
 // one second in ticks
 static const int kSecond = 1000 / portTICK_PERIOD_MS;
@@ -62,14 +57,16 @@ static const int kSecond = 1000 / portTICK_PERIOD_MS;
 // delay between two temperature measurements
 static const int kTempDelay = CONFIG_TEMPERATURE_PERIOD_SECONDS * kSecond;
 
-// keep that many hours of temperature measurements in case internet goes down
-static const int kTempQueueLength =
-    CONFIG_TEMPERATURE_KEEP_HOURS * 60 * 60 / CONFIG_TEMPERATURE_PERIOD_SECONDS;
+// delay between two particulate matter measurements
+// static const int kPartDelay = CONFIG_PARTICULATE_PERIOD_SECONDS * kSecond;
+
+static StaticQueue_t measurement_queue;
+static measurement measurement_queue_buf[CONFIG_MEASUREMENT_QUEUE_SIZE];
 
 // tag for application logs
 static const char *const kTag = "airmon";
 
-// time when the system was booted
+// UNIX time when the system was booted
 static volatile time_t boot_timestamp = 0;
 
 // If time has been initialized, returns it as a UNIX timestamp.
@@ -88,7 +85,7 @@ static void time_sync_notification() {
   // TODO: trigger time ready event
 }
 
-static void start_sntp_update() {
+static void sntp_update_start_once() {
   static bool time_update_started = false;
 
   if (!time_update_started) {
@@ -120,20 +117,20 @@ static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
   OneWireBus_ROMCode rom_code = {0};
   const owb_status status = owb_read_rom(owb, &rom_code);
 
-  if (status == OWB_STATUS_OK) {
-    char rom_code_s[OWB_ROM_CODE_STRING_LENGTH];
-    owb_string_from_rom_code(rom_code, rom_code_s, sizeof(rom_code_s));
-    ESP_LOGI(kTag, "found device %s", rom_code_s);
-  } else {
+  if (status != OWB_STATUS_OK) {
     ESP_LOGE(kTag, "could not read ROM code: %d", status);
     return NULL;
   }
+
+  char rom_code_s[OWB_ROM_CODE_STRING_LENGTH];
+  owb_string_from_rom_code(rom_code, rom_code_s, sizeof(rom_code_s));
+  ESP_LOGI(kTag, "found device %s", rom_code_s);
 
   // Create DS18B20 devices on the 1-Wire bus
   DS18B20_Info *const device = ds18b20_malloc(); // heap allocation
   ds18b20_init_solo(device, owb);                // only one device on bus
   ds18b20_use_crc(device, true); // enable CRC check on all reads
-  ds18b20_set_resolution(device, kSensorResolution);
+  ds18b20_set_resolution(device, DS18B20_RESOLUTION_12_BIT);
 
   return device;
 }
@@ -193,103 +190,97 @@ _Noreturn void task_collect_temps(const sensor_config *const config) {
     OneWireBus *const owb = &rmt_driver_info.bus;
     DS18B20_Info *device = search_temp_sensor(owb);
 
-    run_temp_measurements(device, config);
-    ESP_LOGE(kTag, "sensor %s failed, restarting", config->name);
+    if (device) {
+      run_temp_measurements(device, config);
+      ds18b20_free(&device);
+    }
 
-    // clean up dynamically allocated data
-    ds18b20_free(&device);
     owb_uninitialize(owb);
+
+    ESP_LOGE(kTag, "sensor %s failed, restarting", config->name);
   }
 }
 
-static void event_handler(void *arg, esp_event_base_t event_base,
-                          int32_t event_id, void *event_data) {
-  EventGroupHandle_t wf_init_evt = arg;
+static void handle_ip_event(void *const arg, const esp_event_base_t event_base,
+                            const int32_t event_id, void *const event_data) {
+  assert(event_base == IP_EVENT);
 
-  if (event_base == WIFI_EVENT) {
-    if (event_id == WIFI_EVENT_STA_START) {
-      esp_wifi_connect();
-    }
-    if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-      esp_wifi_connect();
-    }
+  switch (event_id) {
+  case IP_EVENT_STA_GOT_IP: {
+    const ip_event_got_ip_t *const evt = event_data;
+    ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
+    sntp_update_start_once();
+    break;
   }
 
-  if (event_base == IP_EVENT) {
-    if (event_id == IP_EVENT_STA_GOT_IP) {
-      ip_event_got_ip_t *evt = event_data;
-      ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
-      xEventGroupSetBits(wf_init_evt, Connected);
-      start_sntp_update();
-    }
+  case IP_EVENT_STA_LOST_IP:
+    ESP_LOGI(kTag, "lost ip");
+    break;
+
+  default:
+    ESP_LOGI(kTag, "unexpected ip event %d", event_id);
+    break;
   }
 }
 
-static void wifi_init() {
+static void handle_wifi_event(void *const arg,
+                              const esp_event_base_t event_base,
+                              const int32_t event_id, void *const event_data) {
+  assert(event_base == WIFI_EVENT);
+
+  switch (event_id) {
+  case WIFI_EVENT_STA_START:
+    esp_wifi_connect();
+    break;
+
+  case WIFI_EVENT_STA_CONNECTED:
+    ESP_LOGI(kTag, "connected to AP");
+    break;
+
+  case WIFI_EVENT_STA_DISCONNECTED:
+    ESP_LOGI(kTag, "disconnected from AP");
+    esp_wifi_connect();
+    break;
+
+  default:
+    ESP_LOGI(kTag, "unexpected sta event %d", event_id);
+    break;
+  }
+}
+
+// https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-lwip-init-phase
+static void app_init_wifi() {
+  // initialize LwIP and main event loop
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+  // create station interface
   esp_netif_create_default_wifi_sta();
 
+  // initialize Wi-Fi driver
   wifi_init_config_t wf_init_conf = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&wf_init_conf));
-}
 
-_Noreturn static void task_wifi_init_sta() {
-  esp_event_handler_instance_t evt_any_id, evt_got_ip;
-
-  EventGroupHandle_t wf_init_evt = xEventGroupCreate();
+  // bind event handlers
+  ESP_ERROR_CHECK(esp_event_handler_instance_register(
+      WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, NULL, NULL));
 
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
-      WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, wf_init_evt, &evt_any_id));
+      IP_EVENT, ESP_EVENT_ANY_ID, handle_ip_event, NULL, NULL));
 
-  ESP_ERROR_CHECK(esp_event_handler_instance_register(
-      IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, wf_init_evt, &evt_got_ip));
-
+  // connect to station
   wifi_config_t wf_conf = {
       .sta = {.ssid = CONFIG_WIFI_SSID,
               .password = CONFIG_WIFI_PASSWORD,
               .threshold.authmode = WIFI_AUTH_WPA2_PSK,
               .pmf_cfg = {.capable = true, .required = false}},
   };
-
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wf_conf));
   ESP_ERROR_CHECK(esp_wifi_start());
-
-  for (;;) {
-    EventBits_t bits = xEventGroupWaitBits(
-        wf_init_evt, Connected | Disconnected, pdTRUE, pdFALSE, portMAX_DELAY);
-
-    if (bits & Connected) {
-      ESP_LOGI(kTag, "connected to wifi");
-    }
-
-    if (bits & Disconnected) {
-      ESP_LOGI(kTag, "disconnected from wifi");
-    }
-  }
-
-  ESP_ERROR_CHECK(esp_event_handler_instance_unregister(
-      IP_EVENT, IP_EVENT_STA_GOT_IP, evt_got_ip));
-  ESP_ERROR_CHECK(esp_event_handler_instance_unregister(
-      WIFI_EVENT, ESP_EVENT_ANY_ID, evt_any_id));
-
-  vEventGroupDelete(wf_init_evt);
 }
 
-static void nvs_init() {
-  esp_err_t ret = nvs_flash_init();
-
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-      ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    ret = nvs_flash_init();
-  }
-
-  ESP_ERROR_CHECK(ret);
-}
-
-static void log_init() {
+static void app_init_log() {
   esp_log_level_set("*", ESP_LOG_INFO);
 
   // To debug, use 'make menuconfig' to set default Log level to DEBUG, then
@@ -301,20 +292,13 @@ static void log_init() {
 }
 
 static QueueHandle_t make_measurement_queue() {
-  size_t len = kTempQueueLength;
-  QueueHandle_t temp_queue = NULL;
+  const QueueHandle_t queue =
+      xQueueCreateStatic(CONFIG_MEASUREMENT_QUEUE_SIZE, sizeof(measurement),
+                         (uint8_t *)measurement_queue_buf, &measurement_queue);
 
-  while (!temp_queue && len > 0) {
-    temp_queue = xQueueCreate(len, sizeof(measurement));
-    len /= 2;
-  }
+  configASSERT(queue);
 
-  if (!temp_queue) {
-    ESP_LOGE(kTag, "could not initialize temperature queue");
-    esp_restart();
-  }
-
-  return temp_queue;
+  return queue;
 }
 
 static void start_temp_tasks(const QueueHandle_t ms_queue) {
@@ -337,16 +321,14 @@ static bool is_valid_timestamp(const time_t ts) {
 }
 
 _Noreturn void app_main() {
-  log_init();
-  nvs_init();
-  wifi_init();
-
-  xTaskCreate(task_wifi_init_sta, "wifi_init", 2048, NULL, 1, NULL);
+  app_init_log();
+  app_init_wifi();
 
   const QueueHandle_t ms_queue = make_measurement_queue();
   start_temp_tasks(ms_queue);
 
-  for (int i = 0; i < 60 * 60; ++i) {
+  // wait for SNTP time update for at most 10 minutes
+  for (int i = 0; boot_timestamp == 0 && i < 10 * 60; ++i) {
     vTaskDelay(kSecond);
   }
 
