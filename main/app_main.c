@@ -3,7 +3,9 @@
 #include "esp_log.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#include "esp_tls.h"
 #include "esp_wifi.h"
+#include "mqtt_client.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -66,6 +68,8 @@ static measurement measurement_queue_buf[CONFIG_MEASUREMENT_QUEUE_SIZE];
 // tag for application logs
 static const char *const kTag = "airmon";
 
+static volatile esp_mqtt_client_handle_t mqtt_client = NULL;
+
 // UNIX time when the system was booted
 static volatile time_t boot_timestamp = 0;
 
@@ -77,6 +81,74 @@ static time_t get_timestamp() {
   } else {
     return esp_timer_get_time() / kMicrosecondsPerSecond;
   }
+}
+
+static esp_err_t mqtt_event_handler(const esp_mqtt_event_handle_t evt) {
+  mqtt_client = evt->client;
+
+  switch (evt->event_id) {
+  case MQTT_EVENT_CONNECTED:
+    ESP_LOGI(kTag, "mqtt connected");
+    break;
+
+  case MQTT_EVENT_DISCONNECTED:
+    mqtt_client = NULL;
+    ESP_LOGI(kTag, "mqtt disconnected");
+    break;
+
+  case MQTT_EVENT_PUBLISHED:
+    ESP_LOGI(kTag, "mqtt published event");
+    break;
+
+  case MQTT_EVENT_ERROR:
+    ESP_LOGE(kTag, "mqtt error");
+    break;
+
+  default:
+    break;
+  }
+
+  return ESP_OK;
+}
+
+static void mqtt_start_once() {
+  static bool mqtt_started = false;
+
+  if (mqtt_started) {
+    return;
+  }
+
+  mqtt_started = true;
+
+  const size_t psk_str_len = strlen(CONFIG_MQTT_PSK);
+  const size_t psk_len = psk_str_len / 2;
+
+  assert(psk_str_len % 2 == 0);
+
+  static uint8_t psk[32];
+
+  for (size_t i = 0; i < psk_len; ++i) {
+    char b[3] = {0, 0, 0};
+    b[0] = CONFIG_MQTT_PSK[i * 2];
+    b[1] = CONFIG_MQTT_PSK[i * 2 + 1];
+    psk[i] = strtol(b, NULL, 16);
+  }
+
+  static const psk_hint_key_t psk_hint_key = {
+      .key = psk,
+      .key_size = psk_len,
+      .hint = CONFIG_MQTT_HINT,
+  };
+  const esp_mqtt_client_config_t conf = {
+      .uri = CONFIG_MQTT_BROKER_URI,
+      .event_handle = mqtt_event_handler,
+      .psk_hint_key = &psk_hint_key,
+      .keepalive = 30,
+  };
+  const esp_mqtt_client_handle_t client = esp_mqtt_client_init(&conf);
+  esp_mqtt_client_start(client);
+
+  ESP_LOGI(kTag, "mqtt client started");
 }
 
 static void time_sync_notification() {
@@ -210,6 +282,7 @@ static void handle_ip_event(void *const arg, const esp_event_base_t event_base,
     const ip_event_got_ip_t *const evt = event_data;
     ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
     sntp_update_start_once();
+    mqtt_start_once();
     break;
   }
 
@@ -320,6 +393,31 @@ static bool is_valid_timestamp(const time_t ts) {
   return ts >= min_valid_ts;
 }
 
+static void format_temp_msg(char *const msg, const size_t len,
+                            const measurement *const ms) {
+  snprintf(msg, len,
+           "{"
+           "\"time\":%ld,"
+           "\"sens\":\"%s\","
+           "\"temp\":%f"
+           "}",
+           ms->time, ms->sensor, ms->data.temp);
+}
+
+static void format_part_msg(char *const msg, const size_t len,
+                            const measurement *const ms) {
+  snprintf(msg, len,
+           "{"
+           "\"time\":%ld,"
+           "\"sens\":\"%s\","
+           "\"pm1\":%f,"
+           "\"pm2\":%f,"
+           "\"pm10\":%f,"
+           "}",
+           ms->time, ms->sensor, ms->data.part.pm1, ms->data.part.pm2,
+           ms->data.part.pm10);
+}
+
 _Noreturn void app_main() {
   app_init_log();
   app_init_wifi();
@@ -333,29 +431,41 @@ _Noreturn void app_main() {
   }
 
   for (;;) {
-    struct tm timeinfo;
-    char time_str[20];
+    char msg[256];
     measurement ms;
 
     if (xQueueReceive(ms_queue, &ms, portMAX_DELAY)) {
+      // fix time if it was assigned before SNTP data became available
       if (!is_valid_timestamp(ms.time)) {
         ms.time += boot_timestamp;
       }
 
-      localtime_r(&ms.time, &timeinfo);
-      strftime(time_str, sizeof(time_str), "%F %H:%M:%S", &timeinfo);
-
-      printf("%s\t%s\t", time_str, ms.sensor);
+      const char *type = "";
 
       switch (ms.type) {
       case MS_TEMPERATURE:
-        printf("%.1f°C\n", ms.data.temp);
+        format_temp_msg(msg, sizeof(msg), &ms);
+        type = "temp";
         break;
 
       case MS_PARTICULATES:
-        printf("PM1 %.2f, PM2.5 %.2f, PM10 %.2f\n", ms.data.part.pm1,
-               ms.data.part.pm2, ms.data.part.pm10);
+        format_part_msg(msg, sizeof(msg), &ms);
+        type = "part";
         break;
+
+      default:
+        ESP_LOGE(kTag, "invalid message type %d", ms.type);
+        continue;
+      }
+
+      for (int result = -1; result <= 0;) {
+        esp_mqtt_client_handle_t client = mqtt_client;
+        if (client) {
+          result = esp_mqtt_client_publish(client, type, msg, 0, 1, 1);
+        }
+        if (result == -1) {
+          vTaskDelay(kSecond);
+        }
       }
     }
   }

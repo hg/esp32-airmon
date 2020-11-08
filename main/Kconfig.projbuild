@@ -11,9 +11,11 @@ config PARTICULATE_PERIOD_SECONDS
 	default 900
 
 config MEASUREMENT_QUEUE_SIZE
-	int "How many temperature & particulate measurements to keep in queue"
+	int "Measurement queue size"
 	range 1 10000
 	default 500
+	help
+		How many temperature & particulate measurements to keep in queue
 
 config WIFI_SSID
 	string "WiFi SSID"
@@ -26,5 +28,21 @@ config WIFI_PASSWORD
 	default "mypassword"
 	help
 		WiFi password (WPA or WPA2) to use
+
+config MQTT_BROKER_URI
+	string "URI of MQTT broker"
+	default "mqtts://mqtt.eclipse.org"
+	help
+		URI of MQTT broker to send measurement data to
+
+config MQTT_HINT
+	string "MQTT hint"
+	default "airmon"
+
+config MQTT_PSK
+	string "MQTT pre-shared key in HEX"
+	default "deadbeef"
+	help
+		Pre-shared key for TLS auth as a hex string
 endmenu
 
