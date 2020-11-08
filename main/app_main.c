@@ -1,6 +1,7 @@
 #include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -10,7 +11,8 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-#include "sys/time.h"
+#include "assert.h"
+#include "time.h"
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -50,6 +52,8 @@ static sensor_config temp_sensors[] = {
 
 typedef enum { Connected = BIT0, Disconnected = BIT1 } wifi_event_bit;
 
+static const int64_t kMicrosecondsPerSecond = 1000 * 1000;
+
 static const int kSensorResolution = (DS18B20_RESOLUTION_12_BIT);
 
 // one second in ticks
@@ -64,6 +68,40 @@ static const int kTempQueueLength =
 
 // tag for application logs
 static const char *const kTag = "airmon";
+
+// time when the system was booted
+static volatile time_t boot_timestamp = 0;
+
+// If time has been initialized, returns it as a UNIX timestamp.
+// Otherwise, returns time in seconds since last boot.
+static time_t get_timestamp() {
+  if (boot_timestamp > 0) {
+    return time(NULL);
+  } else {
+    return esp_timer_get_time() / kMicrosecondsPerSecond;
+  }
+}
+
+static void time_sync_notification() {
+  boot_timestamp = time(NULL);
+  ESP_LOGI(kTag, "sntp time update finished");
+  // TODO: trigger time ready event
+}
+
+static void start_sntp_update() {
+  static bool time_update_started = false;
+
+  if (!time_update_started) {
+    time_update_started = true;
+
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_set_time_sync_notification_cb(time_sync_notification);
+    sntp_init();
+
+    ESP_LOGI(kTag, "sntp time update started");
+  }
+}
 
 static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
   for (;;) {
@@ -108,12 +146,6 @@ static OneWireBus *initialize_bus(owb_rmt_driver_info *const driver_info,
   owb_use_crc(owb, true); // enable CRC check for ROM code
 
   return owb;
-}
-
-static time_t get_timestamp() {
-  struct timeval tm;
-  gettimeofday(&tm, NULL);
-  return tm.tv_sec;
 }
 
 static void run_temp_measurements(const DS18B20_Info *const device,
@@ -188,6 +220,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
       ip_event_got_ip_t *evt = event_data;
       ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
       xEventGroupSetBits(wf_init_evt, Connected);
+      start_sntp_update();
     }
   }
 }
@@ -298,6 +331,11 @@ static void start_temp_tasks(const QueueHandle_t ms_queue) {
   }
 }
 
+static bool is_valid_timestamp(const time_t ts) {
+  const time_t min_valid_ts = 1577836800; // 2020-01-01 UTC
+  return ts >= min_valid_ts;
+}
+
 _Noreturn void app_main() {
   log_init();
   nvs_init();
@@ -306,21 +344,35 @@ _Noreturn void app_main() {
   xTaskCreate(task_wifi_init_sta, "wifi_init", 2048, NULL, 1, NULL);
 
   const QueueHandle_t ms_queue = make_measurement_queue();
-
   start_temp_tasks(ms_queue);
 
+  for (int i = 0; i < 60 * 60; ++i) {
+    vTaskDelay(kSecond);
+  }
+
   for (;;) {
+    struct tm timeinfo;
+    char time_str[20];
     measurement ms;
 
     if (xQueueReceive(ms_queue, &ms, portMAX_DELAY)) {
+      if (!is_valid_timestamp(ms.time)) {
+        ms.time += boot_timestamp;
+      }
+
+      localtime_r(&ms.time, &timeinfo);
+      strftime(time_str, sizeof(time_str), "%F %H:%M:%S", &timeinfo);
+
+      printf("%s\t%s\t", time_str, ms.sensor);
+
       switch (ms.type) {
       case MS_TEMPERATURE:
-        printf("%s: %.1f°C\n", ms.sensor, ms.data.temp);
+        printf("%.1f°C\n", ms.data.temp);
         break;
 
       case MS_PARTICULATES:
-        printf("%s: PM1 %.2f, PM2.5 %.2f, PM10 %.2f\n", ms.sensor,
-               ms.data.part.pm1, ms.data.part.pm2, ms.data.part.pm10);
+        printf("PM1 %.2f, PM2.5 %.2f, PM10 %.2f\n", ms.data.part.pm1,
+               ms.data.part.pm2, ms.data.part.pm10);
         break;
       }
     }
