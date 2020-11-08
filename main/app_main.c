@@ -27,11 +27,21 @@ typedef struct {
   QueueHandle_t queue;
 } sensor_config;
 
+typedef enum { MS_TEMPERATURE, MS_PARTICULATES } measurement_type;
+
 typedef struct {
+  measurement_type type;
   time_t time;
-  float temp;
   const char *sensor;
-} temp_measurement;
+  union {
+    float temp;
+    struct {
+      float pm1;
+      float pm2;
+      float pm10;
+    } part;
+  } data;
+} measurement;
 
 static sensor_config temp_sensors[] = {
     {"room", 5, RMT_CHANNEL_0, RMT_CHANNEL_1, NULL},
@@ -52,6 +62,7 @@ static const int kTempDelay = CONFIG_TEMPERATURE_PERIOD_SECONDS * kSecond;
 static const int kTempQueueLength =
     CONFIG_TEMPERATURE_KEEP_HOURS * 60 * 60 / CONFIG_TEMPERATURE_PERIOD_SECONDS;
 
+// tag for application logs
 static const char *const kTag = "airmon";
 
 static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
@@ -99,34 +110,36 @@ static OneWireBus *initialize_bus(owb_rmt_driver_info *const driver_info,
   return owb;
 }
 
+static time_t get_timestamp() {
+  struct timeval tm;
+  gettimeofday(&tm, NULL);
+  return tm.tv_sec;
+}
+
 static void run_temp_measurements(const DS18B20_Info *const device,
                                   const sensor_config *const config) {
   int error_count = 0;
+  measurement temp = {.type = MS_TEMPERATURE, .sensor = config->name};
 
   while (error_count < 10) {
     TickType_t last_wake_time = xTaskGetTickCount();
 
-    temp_measurement measurement;
     const DS18B20_ERROR err =
-        ds18b20_convert_and_read_temp(device, &measurement.temp);
+        ds18b20_convert_and_read_temp(device, &temp.data.temp);
 
     if (err != DS18B20_OK) {
-      ESP_LOGW(kTag, "measurement failed in sensor %s", config->name);
       ++error_count;
+      ESP_LOGW(kTag, "measurement failed in sensor %s", config->name);
     } else {
       error_count = 0;
 
-      struct timeval tm;
-      gettimeofday(&tm, NULL);
-
-      measurement.sensor = config->name;
-      measurement.time = tm.tv_sec;
+      temp.time = get_timestamp();
 
       BaseType_t sent;
       do {
-        sent = xQueueSendToBack(config->queue, &measurement, kSecond);
+        sent = xQueueSendToBack(config->queue, &temp, kSecond);
         if (sent == errQUEUE_FULL) {
-          temp_measurement buf;
+          measurement buf;
           xQueueReceive(config->queue, &buf, 0);
         }
       } while (sent == errQUEUE_FULL);
@@ -136,7 +149,7 @@ static void run_temp_measurements(const DS18B20_Info *const device,
   }
 }
 
-_Noreturn void collect_temps(const sensor_config *const config) {
+_Noreturn void task_collect_temps(const sensor_config *const config) {
   ESP_LOGI(kTag, "starting temp collection task for %s", config->name);
 
   for (;;) {
@@ -179,14 +192,16 @@ static void event_handler(void *arg, esp_event_base_t event_base,
   }
 }
 
-void wifi_init_sta() {
+static void wifi_init() {
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   esp_netif_create_default_wifi_sta();
 
   wifi_init_config_t wf_init_conf = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&wf_init_conf));
+}
 
+_Noreturn static void task_wifi_init_sta() {
   esp_event_handler_instance_t evt_any_id, evt_got_ip;
 
   EventGroupHandle_t wf_init_evt = xEventGroupCreate();
@@ -229,7 +244,7 @@ void wifi_init_sta() {
   vEventGroupDelete(wf_init_evt);
 }
 
-static void init_nvs() {
+static void nvs_init() {
   esp_err_t ret = nvs_flash_init();
 
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -241,7 +256,7 @@ static void init_nvs() {
   ESP_ERROR_CHECK(ret);
 }
 
-_Noreturn void app_main() {
+static void log_init() {
   esp_log_level_set("*", ESP_LOG_INFO);
 
   // To debug, use 'make menuconfig' to set default Log level to DEBUG, then
@@ -249,41 +264,65 @@ _Noreturn void app_main() {
   // esp_log_level_set("owb", ESP_LOG_DEBUG);
   // esp_log_level_set("ds18b20", ESP_LOG_DEBUG);
   // esp_log_level_set("owb_rmt", ESP_LOG_DEBUG);
+  // esp_log_level_set(kTag, ESP_LOG_DEBUG);
+}
 
-  init_nvs();
+static QueueHandle_t make_measurement_queue() {
+  size_t len = kTempQueueLength;
+  QueueHandle_t temp_queue = NULL;
 
-  xTaskCreate(wifi_init_sta, "wifi_init", 4096, NULL, 1, NULL);
-
-  QueueHandle_t temp_queue =
-      xQueueCreate(kTempQueueLength, sizeof(temp_measurement));
+  while (!temp_queue && len > 0) {
+    temp_queue = xQueueCreate(len, sizeof(measurement));
+    len /= 2;
+  }
 
   if (!temp_queue) {
-    ESP_LOGW(kTag, "trying a smaller temp queue");
-
-    temp_queue = xQueueCreate(10, sizeof(temp_measurement));
-
-    if (!temp_queue) {
-      ESP_LOGE(kTag, "temp queue could not be created");
-      esp_restart();
-    }
+    ESP_LOGE(kTag, "could not initialize temperature queue");
+    esp_restart();
   }
 
-  for (int i = 0; i < sizeof(temp_sensors) / sizeof(*temp_sensors); ++i) {
-    char name[24];
+  return temp_queue;
+}
 
-    sensor_config *conf = &temp_sensors[i];
-    conf->queue = temp_queue;
+static void start_temp_tasks(const QueueHandle_t ms_queue) {
+  const size_t len = sizeof(temp_sensors) / sizeof(*temp_sensors);
+  char name[24];
 
-    snprintf(name, sizeof(name), "temperature_%d", conf->pin);
+  for (int i = 0; i < len; ++i) {
+    sensor_config *const conf = &temp_sensors[i];
+    conf->queue = ms_queue;
 
-    xTaskCreate((TaskFunction_t)collect_temps, name, 2048, conf, 1, NULL);
+    snprintf(name, sizeof(name), "ms_temp_%d", conf->pin);
+
+    xTaskCreate((TaskFunction_t)task_collect_temps, name, 2048, conf, 1, NULL);
   }
+}
+
+_Noreturn void app_main() {
+  log_init();
+  nvs_init();
+  wifi_init();
+
+  xTaskCreate(task_wifi_init_sta, "wifi_init", 2048, NULL, 1, NULL);
+
+  const QueueHandle_t ms_queue = make_measurement_queue();
+
+  start_temp_tasks(ms_queue);
 
   for (;;) {
-    temp_measurement temp = {0};
+    measurement ms;
 
-    if (xQueueReceive(temp_queue, &temp, portMAX_DELAY)) {
-      printf("%s: %.1f°C\n", temp.sensor, temp.temp);
+    if (xQueueReceive(ms_queue, &ms, portMAX_DELAY)) {
+      switch (ms.type) {
+      case MS_TEMPERATURE:
+        printf("%s: %.1f°C\n", ms.sensor, ms.data.temp);
+        break;
+
+      case MS_PARTICULATES:
+        printf("%s: PM1 %.2f, PM2.5 %.2f, PM10 %.2f\n", ms.sensor,
+               ms.data.part.pm1, ms.data.part.pm2, ms.data.part.pm10);
+        break;
+      }
     }
   }
 }
