@@ -7,6 +7,8 @@
 #include "esp_tls.h"
 #include "esp_wifi.h"
 #include "mqtt_client.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -22,7 +24,7 @@
 #include "owb.h"
 #include "owb_rmt.h"
 
-#define KiB(kb) (kb * 1024)
+#define KiB(kb) ((kb)*1024)
 
 typedef struct {
   const char *name;
@@ -51,6 +53,19 @@ static sensor_config temp_sensors[] = {
     // {"street", 12, RMT_CHANNEL_2, RMT_CHANNEL_3, NULL},
 };
 
+struct {
+  const char *dev_name;
+  struct {
+    const char *ssid;
+    const char *pass;
+  } wifi;
+  struct {
+    const char *broker;
+    const char *hint;
+    const char *psk;
+  } mqtt;
+} app_settings;
+
 // delay between two temperature measurements
 static const int delay_temp =
     CONFIG_TEMPERATURE_PERIOD_SECONDS * configTICK_RATE_HZ;
@@ -68,14 +83,16 @@ typedef struct {
   psk_hint_key_t psk_hint;
   char msg[256];
   EventGroupHandle_t event;
-  const char *cmd_topic;
-  const char *resp_topic;
+  char *cmd_topic;
+  char *resp_topic;
 } mqtt_client;
 
 typedef struct {
   const char *const cmd;
   bool (*handler)(mqtt_client *const client, const esp_mqtt_event_handle_t evt);
 } mqtt_cmd_handler;
+
+static char *const mqtt_fallback_response_topic = "response/*";
 
 // tag for application logs
 static const char *const kTag = "airmon";
@@ -118,9 +135,18 @@ static bool mqtt_is_broadcast_cmd(const esp_mqtt_event_handle_t evt) {
 
 static bool mqtt_handle_ping(mqtt_client *const client,
                              const esp_mqtt_event_handle_t evt) {
-  const bool bcast = mqtt_is_broadcast_cmd(evt);
-  const char *const topic = bcast ? "response/*" : client->resp_topic;
-  const char *const resp = bcast ? CONFIG_DEV_NAME ": pong" : "pong";
+  const char *topic = NULL;
+  const char *resp = NULL;
+
+  if (mqtt_is_broadcast_cmd(evt)) {
+    char buf[64];
+    topic = "response/*";
+    snprintf(buf, sizeof(buf), "pong: %s", app_settings.dev_name);
+  } else {
+    topic = client->resp_topic;
+    resp = "pong";
+  }
+
   return esp_mqtt_client_publish(client->handle, topic, resp, 0, 1, 0) != -1;
 }
 
@@ -137,7 +163,9 @@ static const mqtt_cmd_handler mqtt_handlers[] = {
 
 static void mqtt_subscribe_to_commands(const mqtt_client *const client) {
   esp_mqtt_client_subscribe(client->handle, "cmd/*", 2);
-  esp_mqtt_client_subscribe(client->handle, client->cmd_topic, 2);
+  if (client->cmd_topic) {
+    esp_mqtt_client_subscribe(client->handle, client->cmd_topic, 2);
+  }
 }
 
 static bool mqtt_handle_message(mqtt_client *const client,
@@ -214,7 +242,20 @@ static size_t hex_str_to_bytes(const char *const str, uint8_t *const buf,
   return psk_len;
 }
 
+static char *mqtt_prepare_topic(const char *const prefix,
+                                const char *const suffix) {
+  // prefix + '/' + suffix + '\0'
+  const size_t topic_len = strlen(prefix) + 1 + strlen(suffix) + 1;
+  char *const cmd_topic = malloc(topic_len);
+  if (cmd_topic == NULL) {
+    return NULL;
+  }
+  snprintf(cmd_topic, topic_len, "%s/%s", prefix, suffix);
+  return cmd_topic;
+}
+
 static mqtt_client *mqtt_client_create(const char *const broker_uri,
+                                       const char *const hint,
                                        const char *const psk_hex) {
   const size_t hex_len = strlen(psk_hex);
   if (hex_len % 2) {
@@ -233,14 +274,19 @@ static mqtt_client *mqtt_client_create(const char *const broker_uri,
 
   mqtt_client *const client = malloc(sizeof(mqtt_client));
 
-  client->psk_hint.hint = CONFIG_MQTT_HINT;
+  client->psk_hint.hint = hint;
   client->psk_hint.key = psk;
   *((size_t *)&(client->psk_hint.key_size)) = psk_len;
 
-  client->cmd_topic = "cmd/" CONFIG_DEV_NAME;
-  client->resp_topic = "response/" CONFIG_DEV_NAME;
+  client->cmd_topic = mqtt_prepare_topic("cmd", app_settings.dev_name);
 
-  const esp_mqtt_client_config_t conf = {.uri = CONFIG_MQTT_BROKER_URI,
+  client->resp_topic = mqtt_prepare_topic("response", app_settings.dev_name);
+  if (client->resp_topic == NULL) {
+    ESP_LOGE(kTag, "malloc failed, using fallback mqtt response topic");
+    client->resp_topic = mqtt_fallback_response_topic;
+  }
+
+  const esp_mqtt_client_config_t conf = {.uri = broker_uri,
                                          .event_handle = mqtt_event_handler,
                                          .user_context = client,
                                          .psk_hint_key = &client->psk_hint,
@@ -267,16 +313,26 @@ cleanup:
   return NULL;
 }
 
-static void mqtt_client_free(mqtt_client *const client) {
+static esp_err_t mqtt_client_free(mqtt_client *const client) {
   if (!client || !client->handle) {
     ESP_LOGE(kTag, "attempt to free already destroyed mqtt client");
-  } else {
-    esp_mqtt_client_stop(client->handle);
-    esp_mqtt_client_destroy(client->handle);
-    vEventGroupDelete(client->event);
-    client->handle = NULL;
-    free(client);
+    return ESP_ERR_INVALID_STATE;
   }
+
+  esp_mqtt_client_stop(client->handle);
+  esp_mqtt_client_destroy(client->handle);
+  client->handle = NULL;
+
+  vEventGroupDelete(client->event);
+
+  if (client->resp_topic != mqtt_fallback_response_topic) {
+    free(client->resp_topic);
+  }
+  free(client->cmd_topic);
+
+  free(client);
+
+  return ESP_OK;
 }
 
 static void time_sync_notification() {
@@ -477,11 +533,14 @@ static void app_init_wifi() {
 
   // connect to station
   wifi_config_t wf_conf = {
-      .sta = {.ssid = CONFIG_WIFI_SSID,
-              .password = CONFIG_WIFI_PASSWORD,
-              .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+      .sta = {.threshold.authmode = WIFI_AUTH_WPA2_PSK,
               .pmf_cfg = {.capable = true, .required = false}},
   };
+  strncpy((char *)wf_conf.sta.ssid, app_settings.wifi.ssid,
+          sizeof(wf_conf.sta.ssid));
+  strncpy((char *)wf_conf.sta.password, app_settings.wifi.pass,
+          sizeof(wf_conf.sta.password));
+
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wf_conf));
   ESP_ERROR_CHECK(esp_wifi_start());
@@ -536,26 +595,27 @@ static void format_temp_msg(char *const msg, const size_t len,
                             const measurement *const ms) {
   snprintf(msg, len,
            "{"
-           "\"dev\":\"" CONFIG_DEV_NAME "\","
+           "\"dev\":\"%s\","
            "\"time\":%ld,"
            "\"sens\":\"%s\","
            "\"temp\":%f"
            "}",
-           ms->time, ms->sensor, ms->temp);
+           app_settings.dev_name, ms->time, ms->sensor, ms->temp);
 }
 
 static void format_part_msg(char *const msg, const size_t len,
                             const measurement *const ms) {
   snprintf(msg, len,
            "{"
-           "\"dev\":\"" CONFIG_DEV_NAME "\","
+           "\"dev\":\"%s\","
            "\"time\":%ld,"
            "\"sens\":\"%s\","
            "\"pm1\":%f,"
            "\"pm2\":%f,"
            "\"pm10\":%f,"
            "}",
-           ms->time, ms->sensor, ms->pm.pm1, ms->pm.pm2, ms->pm.pm10);
+           app_settings.dev_name, ms->time, ms->sensor, ms->pm.pm1, ms->pm.pm2,
+           ms->pm.pm10);
 }
 
 static bool mqtt_send_measurement(mqtt_client *const mq,
@@ -598,6 +658,70 @@ static void restart_peripheral(const periph_module_t module) {
   periph_module_enable(module);
 }
 
+static void app_init_nvs() {
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
+      err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    err = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(err);
+}
+
+static esp_err_t read_setting_str(nvs_handle_t nvs, const char *const name,
+                                  const char **const dst) {
+  ESP_LOGI(kTag, "reading setting %s from NVS", name);
+
+  size_t len;
+  esp_err_t err = nvs_get_str(nvs, name, NULL, &len);
+  if (err != ESP_OK) {
+    ESP_LOGI(kTag, "setting %s not found or not available: %x", name, err);
+    return err;
+  }
+  char *const buf = malloc(len);
+  if (buf == NULL) {
+    ESP_LOGE(kTag, "malloc failed in read_setting_str");
+    return ESP_ERR_NO_MEM;
+  }
+  err = nvs_get_str(nvs, name, buf, &len);
+  if (err == ESP_OK) {
+    *dst = buf;
+    ESP_LOGI(kTag, "setting %s read: [%s]", name, buf);
+  } else {
+    free(buf);
+    ESP_LOGE(kTag, "could not read setting %s: %x", name, err);
+  }
+  return err;
+}
+
+static esp_err_t app_read_settings() {
+  nvs_handle_t nvs;
+
+  const esp_err_t err = nvs_open("storage", NVS_READONLY, &nvs);
+  if (err != ESP_OK) {
+    ESP_LOGE(kTag, "could not open NVS for reading settings: %d", err);
+    return err;
+  }
+
+  app_settings.dev_name = CONFIG_DEV_NAME;
+  app_settings.wifi.ssid = CONFIG_WIFI_SSID;
+  app_settings.wifi.pass = CONFIG_WIFI_PASSWORD;
+  app_settings.mqtt.broker = CONFIG_MQTT_BROKER_URI;
+  app_settings.mqtt.hint = CONFIG_MQTT_HINT;
+  app_settings.mqtt.psk = CONFIG_MQTT_PSK;
+
+  read_setting_str(nvs, "dev/name", &app_settings.dev_name);
+  read_setting_str(nvs, "wifi/ssid", &app_settings.wifi.ssid);
+  read_setting_str(nvs, "wifi/pass", &app_settings.wifi.pass);
+  read_setting_str(nvs, "mqtt/broker", &app_settings.mqtt.broker);
+  read_setting_str(nvs, "mqtt/hint", &app_settings.mqtt.hint);
+  read_setting_str(nvs, "mqtt/psk", &app_settings.mqtt.psk);
+
+  nvs_close(nvs);
+
+  return ESP_OK;
+}
+
 _Noreturn void app_main() {
   app_init_log();
 
@@ -607,6 +731,8 @@ _Noreturn void app_main() {
 
   state_evt = xEventGroupCreate();
 
+  app_init_nvs();
+  app_read_settings();
   app_init_wifi();
 
   xTaskCreate(task_sntp_update, "sntp_update", KiB(2), NULL, 1, NULL);
@@ -618,8 +744,8 @@ _Noreturn void app_main() {
 
   wait_state(STATE_NET_CONNECTED);
 
-  mqtt_client *const client =
-      mqtt_client_create(CONFIG_MQTT_BROKER_URI, CONFIG_MQTT_PSK);
+  mqtt_client *const client = mqtt_client_create(
+      app_settings.mqtt.broker, app_settings.mqtt.hint, app_settings.mqtt.psk);
 
   if (!client) {
     ESP_LOGE(kTag, "could not initialize mqtt client");
