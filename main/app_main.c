@@ -1,4 +1,5 @@
 #include "driver/gpio.h"
+#include "driver/periph_ctrl.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
@@ -22,18 +23,18 @@
 #include "owb.h"
 #include "owb_rmt.h"
 
+#define KiB(kb) (kb * 1024)
+
 typedef struct {
   const char *name;
-  const int pin;
+  const gpio_num_t pin;
   const rmt_channel_t rx;
   const rmt_channel_t tx;
   QueueHandle_t queue;
 } sensor_config;
 
-typedef enum { MS_TEMPERATURE, MS_PARTICULATES } measurement_type;
-
 typedef struct {
-  measurement_type type;
+  enum { MS_TEMPERATURE, MS_PARTICULATES } type;
   time_t time;
   const char *sensor;
   union {
@@ -42,66 +43,86 @@ typedef struct {
       float pm1;
       float pm2;
       float pm10;
-    } part;
-  } data;
+    } pm;
+  };
 } measurement;
 
 static sensor_config temp_sensors[] = {
-    {"room", 5, RMT_CHANNEL_0, RMT_CHANNEL_1, NULL},
+    {"room", GPIO_NUM_5, RMT_CHANNEL_0, RMT_CHANNEL_1, NULL},
     // {"street", 12, RMT_CHANNEL_2, RMT_CHANNEL_3, NULL},
 };
 
-static const int64_t kMicrosecondsPerSecond = 1000 * 1000;
-
-// one second in ticks
-static const int kSecond = 1000 / portTICK_PERIOD_MS;
-
 // delay between two temperature measurements
-static const int kTempDelay = CONFIG_TEMPERATURE_PERIOD_SECONDS * kSecond;
+static const int delay_temp =
+    CONFIG_TEMPERATURE_PERIOD_SECONDS * configTICK_RATE_HZ;
 
 // delay between two particulate matter measurements
 // static const int kPartDelay = CONFIG_PARTICULATE_PERIOD_SECONDS * kSecond;
 
-static StaticQueue_t measurement_queue;
-static measurement measurement_queue_buf[CONFIG_MEASUREMENT_QUEUE_SIZE];
+static struct {
+  StaticQueue_t queue;
+  measurement buffer[CONFIG_MEASUREMENT_QUEUE_SIZE];
+} measurement_queue;
+
+typedef struct {
+  esp_mqtt_client_handle_t handle;
+  psk_hint_key_t psk_hint;
+  char msg[256];
+  EventGroupHandle_t event;
+} mqtt_client;
 
 // tag for application logs
 static const char *const kTag = "airmon";
 
-static volatile esp_mqtt_client_handle_t mqtt_client = NULL;
-
 // UNIX time when the system was booted
-static volatile time_t boot_timestamp = 0;
+static time_t boot_timestamp = 0;
+
+enum {
+  TIME_VALID = BIT0,
+  NET_CONNECTED = BIT1,
+  NET_DISCONNECTED = BIT2,
+};
+
+static EventGroupHandle_t state_evt;
+
+enum {
+  MQTT_READY = BIT0,
+  MQTT_ACK = BIT1,
+};
 
 // If time has been initialized, returns it as a UNIX timestamp.
 // Otherwise, returns time in seconds since last boot.
 static time_t get_timestamp() {
+  const int64_t us_per_sec = 1000 * 1000;
+
   if (boot_timestamp > 0) {
     return time(NULL);
   } else {
-    return esp_timer_get_time() / kMicrosecondsPerSecond;
+    return esp_timer_get_time() / us_per_sec;
   }
 }
 
 static esp_err_t mqtt_event_handler(const esp_mqtt_event_handle_t evt) {
-  mqtt_client = evt->client;
+  mqtt_client *const client = evt->user_context;
 
   switch (evt->event_id) {
   case MQTT_EVENT_CONNECTED:
+    xEventGroupSetBits(client->event, MQTT_READY);
     ESP_LOGI(kTag, "mqtt connected");
     break;
 
   case MQTT_EVENT_DISCONNECTED:
-    mqtt_client = NULL;
+    xEventGroupClearBits(client->event, MQTT_READY);
     ESP_LOGI(kTag, "mqtt disconnected");
     break;
 
   case MQTT_EVENT_PUBLISHED:
-    ESP_LOGI(kTag, "mqtt published event");
+    xEventGroupSetBits(client->event, MQTT_ACK);
+    ESP_LOGD(kTag, "mqtt broker received message %d", evt->msg_id);
     break;
 
   case MQTT_EVENT_ERROR:
-    ESP_LOGE(kTag, "mqtt error");
+    ESP_LOGE(kTag, "mqtt error %d", evt->error_handle->error_type);
     break;
 
   default:
@@ -111,79 +132,107 @@ static esp_err_t mqtt_event_handler(const esp_mqtt_event_handle_t evt) {
   return ESP_OK;
 }
 
-static void mqtt_start_once() {
-  static bool mqtt_started = false;
+// convert hex string to array of bytes and return how many bytes were stored
+static size_t hex_str_to_bytes(const char *const str, uint8_t *const buf,
+                               const size_t buf_len) {
+  const size_t hex_len = strlen(str);
+  const size_t psk_len = hex_len / 2;
 
-  if (mqtt_started) {
-    return;
-  }
-
-  mqtt_started = true;
-
-  const size_t psk_str_len = strlen(CONFIG_MQTT_PSK);
-  const size_t psk_len = psk_str_len / 2;
-
-  assert(psk_str_len % 2 == 0);
-
-  static uint8_t psk[32];
+  assert(hex_len % 2 == 0);
 
   for (size_t i = 0; i < psk_len; ++i) {
     char b[3] = {0, 0, 0};
-    b[0] = CONFIG_MQTT_PSK[i * 2];
-    b[1] = CONFIG_MQTT_PSK[i * 2 + 1];
-    psk[i] = strtol(b, NULL, 16);
+    b[0] = str[i * 2];
+    b[1] = str[i * 2 + 1];
+    buf[i] = strtol(b, NULL, 16);
   }
 
-  static const psk_hint_key_t psk_hint_key = {
-      .key = psk,
-      .key_size = psk_len,
-      .hint = CONFIG_MQTT_HINT,
-  };
-  const esp_mqtt_client_config_t conf = {
-      .uri = CONFIG_MQTT_BROKER_URI,
-      .event_handle = mqtt_event_handler,
-      .psk_hint_key = &psk_hint_key,
-      .keepalive = 30,
-  };
-  const esp_mqtt_client_handle_t client = esp_mqtt_client_init(&conf);
-  esp_mqtt_client_start(client);
+  return psk_len;
+}
 
-  ESP_LOGI(kTag, "mqtt client started");
+static mqtt_client *mqtt_client_create(const char *const broker_uri,
+                                       const char *const psk_hex) {
+  const size_t hex_len = strlen(psk_hex);
+  if (hex_len % 2) {
+    ESP_LOGE(kTag, "invalid psk hex length");
+    return NULL;
+  }
+
+  const size_t psk_len = hex_len / 2;
+  uint8_t *const psk = malloc(psk_len);
+
+  if (hex_str_to_bytes(psk_hex, psk, psk_len) != psk_len) {
+    free(psk);
+    ESP_LOGE(kTag, "could not parse psk hex");
+    return NULL;
+  }
+
+  mqtt_client *const client = malloc(sizeof(mqtt_client));
+
+  client->psk_hint.hint = CONFIG_MQTT_HINT;
+  client->psk_hint.key = psk;
+  *((size_t *)&(client->psk_hint.key_size)) = psk_len;
+
+  const esp_mqtt_client_config_t conf = {.uri = CONFIG_MQTT_BROKER_URI,
+                                         .event_handle = mqtt_event_handler,
+                                         .user_context = client,
+                                         .psk_hint_key = &client->psk_hint,
+                                         .keepalive = 30};
+
+  client->handle = esp_mqtt_client_init(&conf);
+  ESP_ERROR_CHECK(esp_mqtt_client_start(client->handle));
+
+  client->event = xEventGroupCreate();
+
+  return client;
+}
+
+static void mqtt_client_free(mqtt_client *const client) {
+  if (!client || !client->handle) {
+    ESP_LOGE(kTag, "attempt to free already destroyed mqtt client");
+  } else {
+    esp_mqtt_client_stop(client->handle);
+    esp_mqtt_client_destroy(client->handle);
+    vEventGroupDelete(client->event);
+    client->handle = NULL;
+    free(client);
+  }
 }
 
 static void time_sync_notification() {
-  boot_timestamp = time(NULL);
+  if (boot_timestamp == 0) {
+    boot_timestamp = time(NULL);
+    xEventGroupSetBits(state_evt, TIME_VALID);
+  }
   ESP_LOGI(kTag, "sntp time update finished");
-  // TODO: trigger time ready event
 }
 
-static void sntp_update_start_once() {
-  static bool time_update_started = false;
+static void task_sntp_update() {
+  xEventGroupWaitBits(state_evt, NET_CONNECTED, false, false, portMAX_DELAY);
 
-  if (!time_update_started) {
-    time_update_started = true;
+  sntp_setoperatingmode(SNTP_OPMODE_POLL);
+  sntp_setservername(0, "pool.ntp.org");
+  sntp_set_time_sync_notification_cb(time_sync_notification);
+  sntp_init();
 
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_set_time_sync_notification_cb(time_sync_notification);
-    sntp_init();
+  ESP_LOGI(kTag, "sntp time update started");
 
-    ESP_LOGI(kTag, "sntp time update started");
-  }
+  vTaskDelete(NULL);
 }
 
 static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
-  for (;;) {
-    bool found = false;
+  for (bool found = false; !found;) {
     OneWireBus_SearchState search_state = {0};
+    const owb_status status = owb_search_first(owb, &search_state, &found);
 
-    owb_search_first(owb, &search_state, &found);
-    if (found) {
-      break;
+    if (status != OWB_STATUS_OK) {
+      ESP_LOGE(kTag, "owb search failed: %d", status);
+      return NULL;
     }
-
-    ESP_LOGD(kTag, "temp sensor not found, retrying");
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    if (!found) {
+      ESP_LOGD(kTag, "temp sensor not found, retrying");
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
   }
 
   OneWireBus_ROMCode rom_code = {0};
@@ -196,7 +245,7 @@ static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
 
   char rom_code_s[OWB_ROM_CODE_STRING_LENGTH];
   owb_string_from_rom_code(rom_code, rom_code_s, sizeof(rom_code_s));
-  ESP_LOGI(kTag, "found device %s", rom_code_s);
+  ESP_LOGI(kTag, "found device 0x%s", rom_code_s);
 
   // Create DS18B20 devices on the 1-Wire bus
   DS18B20_Info *const device = ds18b20_malloc(); // heap allocation
@@ -217,44 +266,46 @@ static OneWireBus *initialize_bus(owb_rmt_driver_info *const driver_info,
   return owb;
 }
 
+static void queue_send_retrying(const QueueHandle_t queue,
+                                const void *const data,
+                                const size_t data_size) {
+  BaseType_t sent;
+  do {
+    sent = xQueueSendToBack(queue, data, pdMS_TO_TICKS(1000));
+    if (sent == errQUEUE_FULL) {
+      uint8_t buf[data_size];
+      xQueueReceive(queue, buf, 0);
+    }
+  } while (sent == errQUEUE_FULL);
+}
+
 static void run_temp_measurements(const DS18B20_Info *const device,
                                   const sensor_config *const config) {
   int error_count = 0;
-  measurement temp = {.type = MS_TEMPERATURE, .sensor = config->name};
+  measurement ms = {.type = MS_TEMPERATURE, .sensor = config->name};
+  TickType_t last_wake_time = xTaskGetTickCount();
 
-  while (error_count < 10) {
-    TickType_t last_wake_time = xTaskGetTickCount();
-
-    const DS18B20_ERROR err =
-        ds18b20_convert_and_read_temp(device, &temp.data.temp);
+  while (error_count < 4) {
+    const DS18B20_ERROR err = ds18b20_convert_and_read_temp(device, &ms.temp);
 
     if (err != DS18B20_OK) {
       ++error_count;
-      ESP_LOGW(kTag, "measurement failed in sensor %s", config->name);
+      ESP_LOGW(kTag, "measurement failed in %s, err %d", config->name, err);
     } else {
       error_count = 0;
-
-      temp.time = get_timestamp();
-
-      BaseType_t sent;
-      do {
-        sent = xQueueSendToBack(config->queue, &temp, kSecond);
-        if (sent == errQUEUE_FULL) {
-          measurement buf;
-          xQueueReceive(config->queue, &buf, 0);
-        }
-      } while (sent == errQUEUE_FULL);
+      ms.time = get_timestamp();
+      queue_send_retrying(config->queue, &ms, sizeof(measurement));
     }
 
-    vTaskDelayUntil(&last_wake_time, kTempDelay);
+    vTaskDelayUntil(&last_wake_time, delay_temp);
   }
 }
 
 _Noreturn void task_collect_temps(const sensor_config *const config) {
   ESP_LOGI(kTag, "starting temp collection task for %s", config->name);
 
-  for (;;) {
-    vTaskDelay(2 * kSecond);
+  while (true) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
 
     owb_rmt_driver_info rmt_driver_info;
     initialize_bus(&rmt_driver_info, config);
@@ -279,14 +330,17 @@ static void handle_ip_event(void *const arg, const esp_event_base_t event_base,
 
   switch (event_id) {
   case IP_EVENT_STA_GOT_IP: {
+    xEventGroupClearBits(state_evt, NET_DISCONNECTED);
+    xEventGroupSetBits(state_evt, NET_CONNECTED);
+
     const ip_event_got_ip_t *const evt = event_data;
     ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
-    sntp_update_start_once();
-    mqtt_start_once();
     break;
   }
 
   case IP_EVENT_STA_LOST_IP:
+    xEventGroupClearBits(state_evt, NET_CONNECTED);
+    xEventGroupSetBits(state_evt, NET_DISCONNECTED);
     ESP_LOGI(kTag, "lost ip");
     break;
 
@@ -354,22 +408,21 @@ static void app_init_wifi() {
 }
 
 static void app_init_log() {
+#ifdef DEBUG
+  esp_log_level_set("*", ESP_LOG_DEBUG);
+#else
   esp_log_level_set("*", ESP_LOG_INFO);
-
-  // To debug, use 'make menuconfig' to set default Log level to DEBUG, then
-  // uncomment:
-  // esp_log_level_set("owb", ESP_LOG_DEBUG);
-  // esp_log_level_set("ds18b20", ESP_LOG_DEBUG);
-  // esp_log_level_set("owb_rmt", ESP_LOG_DEBUG);
-  // esp_log_level_set(kTag, ESP_LOG_DEBUG);
+#endif
 }
 
 static QueueHandle_t make_measurement_queue() {
-  const QueueHandle_t queue =
-      xQueueCreateStatic(CONFIG_MEASUREMENT_QUEUE_SIZE, sizeof(measurement),
-                         (uint8_t *)measurement_queue_buf, &measurement_queue);
+  const size_t item_size = sizeof(*measurement_queue.buffer);
 
-  configASSERT(queue);
+  const QueueHandle_t queue = xQueueCreateStatic(
+      sizeof(measurement_queue.buffer) / item_size, item_size,
+      (uint8_t *)measurement_queue.buffer, &measurement_queue.queue);
+
+  assert(queue);
 
   return queue;
 }
@@ -384,8 +437,14 @@ static void start_temp_tasks(const QueueHandle_t ms_queue) {
 
     snprintf(name, sizeof(name), "ms_temp_%d", conf->pin);
 
-    xTaskCreate((TaskFunction_t)task_collect_temps, name, 2048, conf, 1, NULL);
+    xTaskCreate((TaskFunction_t)task_collect_temps, name, KiB(2), conf, 2,
+                NULL);
   }
+}
+
+static void start_pm_task(const QueueHandle_t ms_queue) {
+  // TODO: implement pollution collector, currently no-op
+  // xTaskCreate(task_collect_pm, "ms_pm", KiB(2), ms_queue, 2, NULL);
 }
 
 static bool is_valid_timestamp(const time_t ts) {
@@ -397,76 +456,113 @@ static void format_temp_msg(char *const msg, const size_t len,
                             const measurement *const ms) {
   snprintf(msg, len,
            "{"
+           "\"dev\":\"" CONFIG_DEV_NAME "\","
            "\"time\":%ld,"
            "\"sens\":\"%s\","
            "\"temp\":%f"
            "}",
-           ms->time, ms->sensor, ms->data.temp);
+           ms->time, ms->sensor, ms->temp);
 }
 
 static void format_part_msg(char *const msg, const size_t len,
                             const measurement *const ms) {
   snprintf(msg, len,
            "{"
+           "\"dev\":\"" CONFIG_DEV_NAME "\","
            "\"time\":%ld,"
            "\"sens\":\"%s\","
            "\"pm1\":%f,"
            "\"pm2\":%f,"
            "\"pm10\":%f,"
            "}",
-           ms->time, ms->sensor, ms->data.part.pm1, ms->data.part.pm2,
-           ms->data.part.pm10);
+           ms->time, ms->sensor, ms->pm.pm1, ms->pm.pm2, ms->pm.pm10);
+}
+
+static bool mqtt_send_measurement(mqtt_client *const mq,
+                                  const measurement *const ms) {
+  const char *type = "";
+
+  switch (ms->type) {
+  case MS_TEMPERATURE:
+    format_temp_msg(mq->msg, sizeof(mq->msg), ms);
+    type = "meas/temp";
+    break;
+
+  case MS_PARTICULATES:
+    format_part_msg(mq->msg, sizeof(mq->msg), ms);
+    type = "meas/part";
+    break;
+
+  default:
+    ESP_LOGE(kTag, "invalid message type %d", ms->type);
+    return false;
+  }
+
+  for (int result = -1; result < 0;) {
+    result = esp_mqtt_client_publish(mq->handle, type, mq->msg, 0, 1, 1);
+    if (result < 0) {
+      ESP_LOGI(kTag, "mqtt publish failed, retrying");
+      vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+  }
+
+  return true;
+}
+
+static void mqtt_client_wait_ready(mqtt_client *const client) {
+  xEventGroupWaitBits(client->event, MQTT_READY, false, false, portMAX_DELAY);
+}
+
+static void restart_periph(const periph_module_t module) {
+  periph_module_disable(module);
+  periph_module_enable(module);
 }
 
 _Noreturn void app_main() {
   app_init_log();
+
+  // reset peripherals in case of prior crash
+  restart_periph(PERIPH_RMT_MODULE);
+  restart_periph(PERIPH_UART0_MODULE);
+
+  state_evt = xEventGroupCreate();
+
   app_init_wifi();
 
+  xTaskCreate(task_sntp_update, "sntp_update", KiB(2), NULL, 1, NULL);
+
+  // start pollution collectors right away, we can fix time later
   const QueueHandle_t ms_queue = make_measurement_queue();
   start_temp_tasks(ms_queue);
+  start_pm_task(ms_queue);
 
-  // wait for SNTP time update for at most 10 minutes
-  for (int i = 0; boot_timestamp == 0 && i < 10 * 60; ++i) {
-    vTaskDelay(kSecond);
+  xEventGroupWaitBits(state_evt, NET_CONNECTED, false, false, portMAX_DELAY);
+
+  mqtt_client *const client =
+      mqtt_client_create(CONFIG_MQTT_BROKER_URI, CONFIG_MQTT_PSK);
+
+  if (!client) {
+    ESP_LOGE(kTag, "could not initialize mqtt client");
+    esp_restart();
   }
 
-  for (;;) {
-    char msg[256];
-    measurement ms;
+  xEventGroupWaitBits(state_evt, TIME_VALID, false, false, portMAX_DELAY);
 
-    if (xQueueReceive(ms_queue, &ms, portMAX_DELAY)) {
-      // fix time if it was assigned before SNTP data became available
-      if (!is_valid_timestamp(ms.time)) {
-        ms.time += boot_timestamp;
-      }
+  for (measurement ms;;) {
+    mqtt_client_wait_ready(client);
 
-      const char *type = "";
+    xQueueReceive(ms_queue, &ms, portMAX_DELAY);
 
-      switch (ms.type) {
-      case MS_TEMPERATURE:
-        format_temp_msg(msg, sizeof(msg), &ms);
-        type = "temp";
-        break;
+    // fix time if it was assigned before SNTP data became available
+    if (!is_valid_timestamp(ms.time)) {
+      ms.time += boot_timestamp;
+    }
 
-      case MS_PARTICULATES:
-        format_part_msg(msg, sizeof(msg), &ms);
-        type = "part";
-        break;
-
-      default:
-        ESP_LOGE(kTag, "invalid message type %d", ms.type);
-        continue;
-      }
-
-      for (int result = -1; result <= 0;) {
-        esp_mqtt_client_handle_t client = mqtt_client;
-        if (client) {
-          result = esp_mqtt_client_publish(client, type, msg, 0, 1, 1);
-        }
-        if (result == -1) {
-          vTaskDelay(kSecond);
-        }
-      }
+    if (!mqtt_send_measurement(client, &ms)) {
+      ESP_LOGE(kTag, "measurement send failed");
     }
   }
+
+  mqtt_client_free(client);
+  esp_restart();
 }

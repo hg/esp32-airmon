@@ -1,5 +1,9 @@
 menu "airmon configuration"
 
+config DEV_NAME
+	string "Unique device name"
+	default "esp"
+
 config TEMPERATURE_PERIOD_SECONDS
 	int "Temperature measurement period, seconds"
 	range 1 3600
