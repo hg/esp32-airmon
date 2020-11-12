@@ -695,6 +695,13 @@ static esp_err_t read_setting_str(nvs_handle_t nvs, const char *const name,
 }
 
 static esp_err_t app_read_settings() {
+  app_settings.dev_name = CONFIG_DEV_NAME;
+  app_settings.wifi.ssid = CONFIG_WIFI_SSID;
+  app_settings.wifi.pass = CONFIG_WIFI_PASSWORD;
+  app_settings.mqtt.broker = CONFIG_MQTT_BROKER_URI;
+  app_settings.mqtt.hint = CONFIG_MQTT_HINT;
+  app_settings.mqtt.psk = CONFIG_MQTT_PSK;
+
   nvs_handle_t nvs;
 
   const esp_err_t err = nvs_open("storage", NVS_READONLY, &nvs);
@@ -702,13 +709,6 @@ static esp_err_t app_read_settings() {
     ESP_LOGE(kTag, "could not open NVS for reading settings: %d", err);
     return err;
   }
-
-  app_settings.dev_name = CONFIG_DEV_NAME;
-  app_settings.wifi.ssid = CONFIG_WIFI_SSID;
-  app_settings.wifi.pass = CONFIG_WIFI_PASSWORD;
-  app_settings.mqtt.broker = CONFIG_MQTT_BROKER_URI;
-  app_settings.mqtt.hint = CONFIG_MQTT_HINT;
-  app_settings.mqtt.psk = CONFIG_MQTT_PSK;
 
   read_setting_str(nvs, "dev/name", &app_settings.dev_name);
   read_setting_str(nvs, "wifi/ssid", &app_settings.wifi.ssid);
