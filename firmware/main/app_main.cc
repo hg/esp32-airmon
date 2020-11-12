@@ -34,8 +34,10 @@ typedef struct {
   QueueHandle_t queue;
 } sensor_config;
 
+enum measurement_type { MS_TEMPERATURE, MS_PARTICULATES };
+
 typedef struct {
-  enum { MS_TEMPERATURE, MS_PARTICULATES } type;
+  measurement_type type;
   time_t time;
   const char *sensor;
   union {
@@ -80,11 +82,11 @@ static struct {
 
 typedef struct {
   esp_mqtt_client_handle_t handle;
-  psk_hint_key_t psk_hint;
+  psk_hint_key_t *psk_hint;
   char msg[256];
   EventGroupHandle_t event;
   char *cmd_topic;
-  char *resp_topic;
+  const char *resp_topic;
 } mqtt_client;
 
 typedef struct {
@@ -92,7 +94,7 @@ typedef struct {
   bool (*handler)(mqtt_client *const client, const esp_mqtt_event_handle_t evt);
 } mqtt_cmd_handler;
 
-static char *const mqtt_fallback_response_topic = "response/*";
+static const char *const mqtt_fallback_response_topic = "response/*";
 
 // tag for application logs
 static const char *const kTag = "airmon";
@@ -183,7 +185,8 @@ static bool mqtt_handle_message(mqtt_client *const client,
 }
 
 static esp_err_t mqtt_event_handler(const esp_mqtt_event_handle_t evt) {
-  mqtt_client *const client = evt->user_context;
+  mqtt_client *const client =
+      reinterpret_cast<mqtt_client *>(evt->user_context);
 
   switch (evt->event_id) {
   case MQTT_EVENT_CONNECTED:
@@ -246,7 +249,7 @@ static char *mqtt_prepare_topic(const char *const prefix,
                                 const char *const suffix) {
   // prefix + '/' + suffix + '\0'
   const size_t topic_len = strlen(prefix) + 1 + strlen(suffix) + 1;
-  char *const cmd_topic = malloc(topic_len);
+  char *const cmd_topic = new char[topic_len];
   if (cmd_topic == NULL) {
     return NULL;
   }
@@ -264,19 +267,20 @@ static mqtt_client *mqtt_client_create(const char *const broker_uri,
   }
 
   const size_t psk_len = hex_len / 2;
-  uint8_t *const psk = malloc(psk_len);
+  uint8_t *const psk = new uint8_t[psk_len];
 
   if (hex_str_to_bytes(psk_hex, psk, psk_len) != psk_len) {
-    free(psk);
+    delete[] psk;
     ESP_LOGE(kTag, "could not parse psk hex");
     return NULL;
   }
 
-  mqtt_client *const client = malloc(sizeof(mqtt_client));
-
-  client->psk_hint.hint = hint;
-  client->psk_hint.key = psk;
-  *((size_t *)&(client->psk_hint.key_size)) = psk_len;
+  mqtt_client *const client = new mqtt_client;
+  client->psk_hint = new psk_hint_key_t{
+      .key = psk,
+      .key_size = psk_len,
+      .hint = hint,
+  };
 
   client->cmd_topic = mqtt_prepare_topic("cmd", app_settings.dev_name);
 
@@ -286,11 +290,13 @@ static mqtt_client *mqtt_client_create(const char *const broker_uri,
     client->resp_topic = mqtt_fallback_response_topic;
   }
 
-  const esp_mqtt_client_config_t conf = {.uri = broker_uri,
-                                         .event_handle = mqtt_event_handler,
-                                         .user_context = client,
-                                         .psk_hint_key = &client->psk_hint,
-                                         .keepalive = 30};
+  const esp_mqtt_client_config_t conf = {
+      .event_handle = mqtt_event_handler,
+      .uri = broker_uri,
+      .keepalive = 30,
+      .user_context = client,
+      .psk_hint_key = client->psk_hint,
+  };
 
   client->handle = esp_mqtt_client_init(&conf);
   if (client->handle == NULL) {
@@ -308,8 +314,9 @@ static mqtt_client *mqtt_client_create(const char *const broker_uri,
   return client;
 
 cleanup:
-  free(psk);
-  free(client);
+  delete[] psk;
+  delete client->psk_hint;
+  delete client;
   return NULL;
 }
 
@@ -326,16 +333,15 @@ static esp_err_t mqtt_client_free(mqtt_client *const client) {
   vEventGroupDelete(client->event);
 
   if (client->resp_topic != mqtt_fallback_response_topic) {
-    free(client->resp_topic);
+    delete[] client->resp_topic;
   }
-  free(client->cmd_topic);
-
-  free(client);
+  delete[] client->cmd_topic;
+  delete client;
 
   return ESP_OK;
 }
 
-static void time_sync_notification() {
+static void time_sync_notification(timeval *const tm) {
   if (boot_timestamp == 0) {
     boot_timestamp = time(NULL);
     xEventGroupSetBits(state_evt, STATE_TIME_VALID);
@@ -343,7 +349,7 @@ static void time_sync_notification() {
   ESP_LOGI(kTag, "sntp time update finished");
 }
 
-static void task_sntp_update() {
+static void task_sntp_update(void *const arg) {
   wait_state(STATE_NET_CONNECTED);
 
   sntp_setoperatingmode(SNTP_OPMODE_POLL);
@@ -358,7 +364,7 @@ static void task_sntp_update() {
 
 static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
   for (bool found = false; !found;) {
-    OneWireBus_SearchState search_state = {0};
+    OneWireBus_SearchState search_state;
     const owb_status status = owb_search_first(owb, &search_state, &found);
 
     if (status != OWB_STATUS_OK) {
@@ -371,7 +377,7 @@ static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
     }
   }
 
-  OneWireBus_ROMCode rom_code = {0};
+  OneWireBus_ROMCode rom_code;
   const owb_status status = owb_read_rom(owb, &rom_code);
 
   if (status != OWB_STATUS_OK) {
@@ -469,7 +475,8 @@ static void handle_ip_event(void *const arg, const esp_event_base_t event_base,
     xEventGroupClearBits(state_evt, STATE_NET_DISCONNECTED);
     xEventGroupSetBits(state_evt, STATE_NET_CONNECTED);
 
-    const ip_event_got_ip_t *const evt = event_data;
+    const ip_event_got_ip_t *const evt =
+        reinterpret_cast<ip_event_got_ip_t *>(event_data);
     ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
     break;
   }
@@ -531,10 +538,16 @@ static void app_init_wifi() {
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
       IP_EVENT, ESP_EVENT_ANY_ID, handle_ip_event, NULL, NULL));
 
+  wifi_scan_threshold_t thres{
+      .authmode = WIFI_AUTH_WPA2_PSK,
+  };
+
   // connect to station
-  wifi_config_t wf_conf = {
-      .sta = {.threshold.authmode = WIFI_AUTH_WPA2_PSK,
-              .pmf_cfg = {.capable = true, .required = false}},
+  wifi_config_t wf_conf{
+      .sta{
+          .threshold = thres,
+          .pmf_cfg{.capable = true, .required = false},
+      },
   };
   strncpy((char *)wf_conf.sta.ssid, app_settings.wifi.ssid,
           sizeof(wf_conf.sta.ssid));
@@ -678,7 +691,7 @@ static esp_err_t read_setting_str(nvs_handle_t nvs, const char *const name,
     ESP_LOGI(kTag, "setting %s not found or not available: %x", name, err);
     return err;
   }
-  char *const buf = malloc(len);
+  char *const buf = new char[len];
   if (buf == NULL) {
     ESP_LOGE(kTag, "malloc failed in read_setting_str");
     return ESP_ERR_NO_MEM;
@@ -688,7 +701,7 @@ static esp_err_t read_setting_str(nvs_handle_t nvs, const char *const name,
     *dst = buf;
     ESP_LOGI(kTag, "setting %s read: [%s]", name, buf);
   } else {
-    free(buf);
+    delete[] buf;
     ESP_LOGE(kTag, "could not read setting %s: %x", name, err);
   }
   return err;
@@ -722,7 +735,7 @@ static esp_err_t app_read_settings() {
   return ESP_OK;
 }
 
-_Noreturn void app_main() {
+extern "C" _Noreturn void app_main() {
   app_init_log();
 
   // reset peripherals in case of prior crash
