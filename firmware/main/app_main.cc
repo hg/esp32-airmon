@@ -21,9 +21,13 @@
 
 #include "time.h"
 
+#include "algorithm"
+#include "numeric"
+
 #include "ds18b20.h"
 #include "owb.h"
 #include "owb_rmt.h"
+#include <algorithm>
 
 #define KiB(kb) ((kb)*1024)
 
@@ -36,6 +40,14 @@ typedef struct {
 } sensor_config;
 
 enum measurement_type { MS_TEMPERATURE, MS_PARTICULATES };
+
+typedef struct {
+  const char *name;
+  const uart_port_t port;
+  const gpio_num_t rx_pin;
+  const gpio_num_t tx_pin;
+  QueueHandle_t queue;
+} pms_config;
 
 typedef struct {
   measurement_type type;
@@ -69,6 +81,10 @@ typedef struct {
 static sensor_config temp_sensors[] = {
     {"room", GPIO_NUM_5, RMT_CHANNEL_0, RMT_CHANNEL_1, NULL},
     // {"street", 12, RMT_CHANNEL_2, RMT_CHANNEL_3, NULL},
+};
+
+static pms_config pms_stations[] = {
+    {"room", UART_NUM_1, GPIO_NUM_25, GPIO_NUM_27, nullptr},
 };
 
 struct {
@@ -427,6 +443,7 @@ static OneWireBus *initialize_bus(owb_rmt_driver_info *const driver_info,
 static void queue_send_retrying(const QueueHandle_t queue,
                                 const void *const data,
                                 const size_t data_size) {
+  int retry = 0;
   BaseType_t sent;
   do {
     sent = xQueueSendToBack(queue, data, pdMS_TO_TICKS(1000));
@@ -434,7 +451,7 @@ static void queue_send_retrying(const QueueHandle_t queue,
       uint8_t buf[data_size];
       xQueueReceive(queue, buf, 0);
     }
-  } while (sent == errQUEUE_FULL);
+  } while (sent == errQUEUE_FULL && ++retry < 5);
 }
 
 static void run_temp_measurements(const DS18B20_Info *const device,
@@ -610,9 +627,8 @@ static void start_temp_tasks(const QueueHandle_t ms_queue) {
   }
 }
 
-struct pms5003_response {
-  uint8_t magic0;
-  uint8_t magic1;
+struct pms_response {
+  uint16_t magic;
   uint16_t frame_len;
   uint16_t pm1_ug;
   uint16_t pm2_ug;
@@ -627,51 +643,52 @@ struct pms5003_response {
   uint16_t pm5_cnt;
   uint16_t pm10_cnt;
   uint16_t reserved;
-  uint16_t check;
+  uint16_t checksum;
 } __attribute__((packed));
 
-static constexpr size_t pms_frame_len =
-    sizeof(pms5003_response) - sizeof(pms5003_response::magic0) -
-    sizeof(pms5003_response::magic1) - sizeof(pms5003_response::frame_len);
-
-static constexpr int pmUartPort = 1;
+static constexpr size_t pms_frame_len = sizeof(pms_response) -
+                                        sizeof(pms_response::magic) -
+                                        sizeof(pms_response::frame_len);
 
 [[noreturn]] static void task_collect_pm(void *const arg) {
-  auto *const queue = reinterpret_cast<QueueHandle_t>(arg);
+  pms_config *const station = reinterpret_cast<pms_config *>(arg);
 
-  pms5003_response resp;
-  measurement ms{.type = MS_PARTICULATES, .sensor = CONFIG_DEV_NAME};
+  pms_response resp;
+  measurement ms{.type = MS_PARTICULATES, .sensor = station->name};
 
   while (true) {
-    const int received = uart_read_bytes(
-        pmUartPort, &resp, sizeof(pms5003_response), portMAX_DELAY);
+    const int received =
+        uart_read_bytes(station->port, &resp, sizeof(resp), portMAX_DELAY);
 
-    if (received != sizeof(pms5003_response)) {
+    if (received != sizeof(resp)) {
+      if (received == -1) {
+        ESP_LOGE(kTag, "uart receive failed");
+      }
+      uart_flush_input(station->port);
       continue;
     }
 
-    if (resp.magic0 != 0x42 || resp.magic1 != 0x4d) {
-      ESP_LOGW(kTag, "invalid magic number 0x%x%x", resp.magic0, resp.magic1);
+    if (resp.magic != 0x4d42) {
+      ESP_LOGW(kTag, "invalid magic number 0x%x", resp.magic);
       continue;
     }
 
     // flip bytes from big-endian to host architecture's little endian
-    for (uint16_t *p = &resp.frame_len; p <= &resp.check; ++p) {
-      *p = ntohs(*p);
-    }
+    std::transform(&resp.frame_len, (&resp.checksum) + 1, &resp.frame_len,
+                   [](uint16_t num) -> uint16_t { return ntohs(num); });
 
     if (resp.frame_len != pms_frame_len) {
       ESP_LOGW(kTag, "invalid frame length %d", resp.frame_len);
       continue;
     }
 
-    uint16_t checksum = 0;
-    for (uint8_t *p = &resp.magic0;
-         p < reinterpret_cast<uint8_t *>(&resp.check); ++p) {
-      checksum += *p;
-    }
-    if (checksum != resp.check) {
-      ESP_LOGW(kTag, "invalid check 0x%x, expected 0x%x", resp.check, checksum);
+    const uint16_t checksum =
+        std::accumulate(reinterpret_cast<uint8_t *>(&resp.magic),
+                        reinterpret_cast<uint8_t *>(&resp.checksum), 0);
+
+    if (checksum != resp.checksum) {
+      ESP_LOGW(kTag, "received checksum 0x%x, expected 0x%x", resp.checksum,
+               checksum);
       continue;
     }
 
@@ -692,10 +709,10 @@ static constexpr int pmUartPort = 1;
     ms.pm.cnt.pm5_cnt = resp.pm5_cnt;
     ms.pm.cnt.pm10_cnt = resp.pm10_cnt;
 
-    queue_send_retrying(queue, &ms, sizeof(measurement));
+    queue_send_retrying(station->queue, &ms, sizeof(measurement));
 
-    ESP_LOGI(kTag, "received PM: PM1 %dµg, PM2.5 %dµg, PM10 %dµg",
-             resp.pm1_ug_atm, resp.pm2_ug_atm, resp.pm10_ug_atm);
+    ESP_LOGI(kTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", resp.pm1_ug_atm,
+             resp.pm2_ug_atm, resp.pm10_ug_atm);
   }
 }
 
@@ -709,15 +726,18 @@ static void start_pm_task(const QueueHandle_t ms_queue) {
       .source_clk = UART_SCLK_APB,
   };
 
-  const int rx_pin = 25;
-  const int tx_pin = 27;
+  const size_t rx_buf = sizeof(pms_response) * 10;
 
-  ESP_ERROR_CHECK(uart_driver_install(pmUartPort, KiB(2), 0, 0, nullptr, 0));
-  ESP_ERROR_CHECK(uart_param_config(pmUartPort, &conf));
-  ESP_ERROR_CHECK(uart_set_pin(pmUartPort, tx_pin, rx_pin, UART_PIN_NO_CHANGE,
-                               UART_PIN_NO_CHANGE));
+  for (pms_config &stat : pms_stations) {
+    stat.queue = ms_queue;
 
-  xTaskCreate(task_collect_pm, "ms_pm", KiB(4), ms_queue, 4, nullptr);
+    ESP_ERROR_CHECK(uart_driver_install(stat.port, rx_buf, 0, 0, nullptr, 0));
+    ESP_ERROR_CHECK(uart_param_config(stat.port, &conf));
+    ESP_ERROR_CHECK(uart_set_pin(stat.port, stat.tx_pin, stat.rx_pin,
+                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    xTaskCreate(task_collect_pm, "ms_pm", KiB(2), &stat, 4, nullptr);
+  }
 }
 
 static bool is_valid_timestamp(const time_t ts) {
