@@ -34,6 +34,51 @@ func (t *temperature) toPoint() *influxdb2Write.Point {
 		time.Unix(t.Time, 0))
 }
 
+type pmConcentration struct {
+	Pm1   uint16 `json:"pm1"`
+	Pm2_5 uint16 `json:"pm2.5"`
+	Pm10  uint16 `json:"pm10"`
+}
+
+type particulates struct {
+	Device      string          `json:"dev"`
+	Time        int64           `json:"time"`
+	Sensor      string          `json:"sens"`
+	Standard    pmConcentration `json:"std"`
+	Atmospheric pmConcentration `json:"atm"`
+	Count       struct {
+		Pm03  uint16 `json:"pm0.3"`
+		Pm05  uint16 `json:"pm0.5"`
+		Pm1   uint16 `json:"pm1"`
+		Pm2_5 uint16 `json:"pm2.5"`
+		Pm5   uint16 `json:"pm5"`
+		Pm10  uint16 `json:"pm10"`
+	} `json:"cnt"`
+}
+
+func (t *particulates) toPoint() *influxdb2Write.Point {
+	return influxdb2.NewPoint("particulates",
+		map[string]string{
+			"device": t.Device,
+			"sensor": t.Sensor,
+		},
+		map[string]interface{}{
+			"ug_std_1":   t.Standard.Pm1,
+			"ug_std_2_5": t.Standard.Pm2_5,
+			"ug_std_10":  t.Standard.Pm10,
+			"ug_atm_1":   t.Atmospheric.Pm1,
+			"ug_atm_2_5": t.Atmospheric.Pm2_5,
+			"ug_atm_10":  t.Atmospheric.Pm10,
+			"cnt_0_3":    t.Count.Pm03,
+			"cnt_0_5":    t.Count.Pm05,
+			"cnt_1":      t.Count.Pm1,
+			"cnt_2_5":    t.Count.Pm2_5,
+			"cnt_5":      t.Count.Pm5,
+			"cnt_10":     t.Count.Pm10,
+		},
+		time.Unix(t.Time, 0))
+}
+
 func isStdinPiped() bool {
 	stat, err := os.Stdin.Stat()
 	return err == nil && (stat.Mode()&os.ModeCharDevice) == 0
@@ -47,10 +92,25 @@ func saveTemperature(write influxdb2Api.WriteAPIBlocking, data []byte) error {
 	}
 	point := temp.toPoint()
 	if err := write.WritePoint(context.Background(), point); err != nil {
-		log.Print("could not write point: ", err)
+		log.Print("could not temp write point: ", err)
 		return err
 	}
 	log.Print("temp point written: ", temp)
+	return nil
+}
+
+func saveParticulates(write influxdb2Api.WriteAPIBlocking, data []byte) error {
+	var part particulates
+	if err := json.Unmarshal(data, &part); err != nil {
+		log.Print("could not parse particulates json: ", err)
+		return err
+	}
+	point := part.toPoint()
+	if err := write.WritePoint(context.Background(), point); err != nil {
+		log.Print("could not write part point: ", err)
+		return err
+	}
+	log.Print("part point written: ", part)
 	return nil
 }
 
@@ -126,6 +186,13 @@ func main() {
 
 	mqttClient.Subscribe("meas/temp", 0, func(client mqtt.Client, msg mqtt.Message) {
 		go saveTemperature(write, msg.Payload())
+	})
+	if mqttToken.Wait() && mqttToken.Error() != nil {
+		log.Fatal("could not subscribe to mqtt topic: ", mqttToken.Error())
+	}
+
+	mqttClient.Subscribe("meas/part", 0, func(client mqtt.Client, msg mqtt.Message) {
+		go saveParticulates(write, msg.Payload())
 	})
 	if mqttToken.Wait() && mqttToken.Error() != nil {
 		log.Fatal("could not subscribe to mqtt topic: ", mqttToken.Error())
