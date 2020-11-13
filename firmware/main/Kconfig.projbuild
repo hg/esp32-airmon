@@ -12,7 +12,12 @@ config TEMPERATURE_PERIOD_SECONDS
 config PARTICULATE_PERIOD_SECONDS
 	int "Particulate measurement period, seconds"
 	range 1 86400
-	default 900
+	default 600
+
+config PARTICULATE_MEASUREMENTS
+	int "Number of PM measurements per each PARTICULATE_PERIOD_SECONDS"
+	range 1 PARTICULATE_PERIOD_SECONDS
+	default 30
 
 config MEASUREMENT_QUEUE_SIZE
 	int "Measurement queue size"

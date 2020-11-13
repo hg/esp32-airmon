@@ -29,7 +29,15 @@
 #include "owb_rmt.h"
 #include <algorithm>
 
-#define KiB(kb) ((kb)*1024)
+static constexpr size_t KiB(const size_t kb) { return kb * 1024; }
+
+static constexpr TickType_t s_to_ticks(const TickType_t seconds) {
+  return seconds * configTICK_RATE_HZ;
+}
+
+static constexpr TickType_t ms_to_ticks(const TickType_t ms) {
+  return pdMS_TO_TICKS(ms);
+}
 
 typedef struct {
   const char *name;
@@ -39,15 +47,89 @@ typedef struct {
   QueueHandle_t queue;
 } sensor_config;
 
-enum measurement_type { MS_TEMPERATURE, MS_PARTICULATES };
+enum class measurement_type { MS_TEMPERATURE, MS_PARTICULATES };
 
-typedef struct {
+struct pms_response {
+  uint16_t magic;
+  uint16_t frame_len;
+  uint16_t pm1_ug;
+  uint16_t pm2_ug;
+  uint16_t pm10_ug;
+  uint16_t pm1_ug_atm;
+  uint16_t pm2_ug_atm;
+  uint16_t pm10_ug_atm;
+  uint16_t pm03_cnt;
+  uint16_t pm05_cnt;
+  uint16_t pm1_cnt;
+  uint16_t pm2_cnt;
+  uint16_t pm5_cnt;
+  uint16_t pm10_cnt;
+  uint16_t reserved;
+  uint16_t checksum;
+
+  uint16_t calc_checksum() const;
+  void swap_bytes();
+} __attribute__((packed));
+
+uint16_t pms_response::calc_checksum() const {
+  return std::accumulate(reinterpret_cast<const uint8_t *>(&magic),
+                         reinterpret_cast<const uint8_t *>(&checksum), 0);
+}
+
+void pms_response::swap_bytes() {
+  std::transform(&frame_len, (&checksum) + 1, &frame_len,
+                 [](uint16_t num) -> uint16_t { return ntohs(num); });
+}
+
+struct pms_command {
+  uint16_t magic;
+  uint8_t command;
+  uint16_t data;
+  uint16_t checksum;
+} __attribute__((packed));
+
+struct pms_station {
   const char *name;
   const uart_port_t port;
   const gpio_num_t rx_pin;
   const gpio_num_t tx_pin;
   QueueHandle_t queue;
-} pms_config;
+
+  int read_response(pms_response &resp, const TickType_t wait) const {
+    return uart_read_bytes(port, &resp, sizeof(resp), wait);
+  }
+
+  int write_command(const pms_command &cmd) const {
+    return uart_write_bytes(port, &cmd, sizeof(cmd));
+  }
+
+  esp_err_t flush_input() const { return uart_flush_input(port); }
+};
+
+struct pm_measurement_sum {
+  uint32_t measurements;
+  struct {
+    uint32_t pm1_ug;
+    uint32_t pm2_ug;
+    uint32_t pm10_ug;
+  } std;
+  struct {
+    uint32_t pm1_ug;
+    uint32_t pm2_ug;
+    uint32_t pm10_ug;
+  } atm;
+  struct {
+    uint32_t pm03_cnt;
+    uint32_t pm05_cnt;
+    uint32_t pm1_cnt;
+    uint32_t pm2_cnt;
+    uint32_t pm5_cnt;
+    uint32_t pm10_cnt;
+  } cnt;
+
+  void add_measurement(const pms_response &resp);
+  void reset();
+} __attribute__((packed));
 
 typedef struct {
   measurement_type type;
@@ -76,14 +158,73 @@ typedef struct {
       } cnt;
     } pm;
   };
+
+  void set_from_response(const pms_response &res) {
+    pm.atm.pm1_ug = res.pm1_ug_atm;
+    pm.atm.pm2_ug = res.pm2_ug_atm;
+    pm.atm.pm10_ug = res.pm10_ug_atm;
+
+    pm.std.pm1_ug = res.pm1_ug;
+    pm.std.pm2_ug = res.pm2_ug;
+    pm.std.pm10_ug = res.pm10_ug;
+
+    pm.cnt.pm03_cnt = res.pm03_cnt;
+    pm.cnt.pm05_cnt = res.pm05_cnt;
+    pm.cnt.pm1_cnt = res.pm1_cnt;
+    pm.cnt.pm2_cnt = res.pm2_cnt;
+    pm.cnt.pm5_cnt = res.pm5_cnt;
+    pm.cnt.pm10_cnt = res.pm10_cnt;
+  }
+
+  void set_avg_from_sum(const pm_measurement_sum &sum) {
+    pm.atm.pm1_ug = sum.atm.pm1_ug / sum.measurements;
+    pm.atm.pm2_ug = sum.atm.pm2_ug / sum.measurements;
+    pm.atm.pm10_ug = sum.atm.pm10_ug / sum.measurements;
+
+    pm.std.pm1_ug = sum.std.pm1_ug / sum.measurements;
+    pm.std.pm2_ug = sum.std.pm2_ug / sum.measurements;
+    pm.std.pm10_ug = sum.std.pm10_ug / sum.measurements;
+
+    pm.cnt.pm03_cnt = sum.cnt.pm03_cnt / sum.measurements;
+    pm.cnt.pm05_cnt = sum.cnt.pm05_cnt / sum.measurements;
+    pm.cnt.pm1_cnt = sum.cnt.pm1_cnt / sum.measurements;
+    pm.cnt.pm2_cnt = sum.cnt.pm2_cnt / sum.measurements;
+    pm.cnt.pm5_cnt = sum.cnt.pm5_cnt / sum.measurements;
+    pm.cnt.pm10_cnt = sum.cnt.pm10_cnt / sum.measurements;
+  }
 } measurement;
+
+static constexpr size_t pms_frame_len = sizeof(pms_response) -
+                                        sizeof(pms_response::magic) -
+                                        sizeof(pms_response::frame_len);
+
+void pm_measurement_sum::reset() { memset(this, 0, sizeof(*this)); }
+
+void pm_measurement_sum::add_measurement(const pms_response &resp) {
+  atm.pm1_ug += resp.pm1_ug_atm;
+  atm.pm2_ug += resp.pm2_ug_atm;
+  atm.pm10_ug += resp.pm10_ug_atm;
+
+  std.pm1_ug += resp.pm1_ug;
+  std.pm2_ug += resp.pm2_ug;
+  std.pm10_ug += resp.pm10_ug;
+
+  cnt.pm03_cnt += resp.pm03_cnt;
+  cnt.pm05_cnt += resp.pm05_cnt;
+  cnt.pm1_cnt += resp.pm1_cnt;
+  cnt.pm2_cnt += resp.pm2_cnt;
+  cnt.pm5_cnt += resp.pm5_cnt;
+  cnt.pm10_cnt += resp.pm10_cnt;
+
+  ++measurements;
+}
 
 static sensor_config temp_sensors[] = {
     {"room", GPIO_NUM_5, RMT_CHANNEL_0, RMT_CHANNEL_1, NULL},
     // {"street", 12, RMT_CHANNEL_2, RMT_CHANNEL_3, NULL},
 };
 
-static pms_config pms_stations[] = {
+static pms_station pms_stations[] = {
     {"room", UART_NUM_1, GPIO_NUM_25, GPIO_NUM_27, nullptr},
 };
 
@@ -101,11 +242,10 @@ struct {
 } app_settings;
 
 // delay between two temperature measurements
-static const int delay_temp =
-    CONFIG_TEMPERATURE_PERIOD_SECONDS * configTICK_RATE_HZ;
+static const int delay_temp = s_to_ticks(CONFIG_TEMPERATURE_PERIOD_SECONDS);
 
 // delay between two particulate matter measurements
-// static const int kPartDelay = CONFIG_PARTICULATE_PERIOD_SECONDS * kSecond;
+static const int delay_pm = s_to_ticks(CONFIG_PARTICULATE_PERIOD_SECONDS);
 
 static struct {
   StaticQueue_t queue;
@@ -446,7 +586,7 @@ static void queue_send_retrying(const QueueHandle_t queue,
   int retry = 0;
   BaseType_t sent;
   do {
-    sent = xQueueSendToBack(queue, data, pdMS_TO_TICKS(1000));
+    sent = xQueueSendToBack(queue, data, s_to_ticks(1));
     if (sent == errQUEUE_FULL) {
       uint8_t buf[data_size];
       xQueueReceive(queue, buf, 0);
@@ -457,7 +597,8 @@ static void queue_send_retrying(const QueueHandle_t queue,
 static void run_temp_measurements(const DS18B20_Info *const device,
                                   const sensor_config *const config) {
   int error_count = 0;
-  measurement ms = {.type = MS_TEMPERATURE, .sensor = config->name};
+  measurement ms = {.type = measurement_type::MS_TEMPERATURE,
+                    .sensor = config->name};
   TickType_t last_wake_time = xTaskGetTickCount();
 
   while (error_count < 4) {
@@ -469,7 +610,7 @@ static void run_temp_measurements(const DS18B20_Info *const device,
     } else {
       error_count = 0;
       ms.time = get_timestamp();
-      queue_send_retrying(config->queue, &ms, sizeof(measurement));
+      queue_send_retrying(config->queue, &ms, sizeof(ms));
     }
 
     vTaskDelayUntil(&last_wake_time, delay_temp);
@@ -627,92 +768,125 @@ static void start_temp_tasks(const QueueHandle_t ms_queue) {
   }
 }
 
-struct pms_response {
-  uint16_t magic;
-  uint16_t frame_len;
-  uint16_t pm1_ug;
-  uint16_t pm2_ug;
-  uint16_t pm10_ug;
-  uint16_t pm1_ug_atm;
-  uint16_t pm2_ug_atm;
-  uint16_t pm10_ug_atm;
-  uint16_t pm03_cnt;
-  uint16_t pm05_cnt;
-  uint16_t pm1_cnt;
-  uint16_t pm2_cnt;
-  uint16_t pm5_cnt;
-  uint16_t pm10_cnt;
-  uint16_t reserved;
-  uint16_t checksum;
-} __attribute__((packed));
+static constexpr uint16_t pms_magic = 0x4d42;
 
-static constexpr size_t pms_frame_len = sizeof(pms_response) -
-                                        sizeof(pms_response::magic) -
-                                        sizeof(pms_response::frame_len);
+static constexpr pms_command init_cmd(uint8_t cmd, uint8_t datah,
+                                      uint8_t datal) {
+  return pms_command{
+      .magic = pms_magic,
+      .command = cmd,
+      .data = PP_HTONS((datah << 8) + datal),
+      .checksum = PP_HTONS(0x4d + 0x42 + cmd + datal + datah),
+  };
+}
+
+static constexpr pms_command pms_cmd_read = init_cmd(0xe2, 0x00, 0x00);
+
+static constexpr pms_command pms_cmd_mode_passive = init_cmd(0xe1, 0x00, 0x00);
+
+static constexpr pms_command pms_cmd_mode_active = init_cmd(0xe1, 0x00, 0x01);
+
+static constexpr pms_command pms_cmd_sleep = init_cmd(0xe4, 0x00, 0x00);
+
+static constexpr pms_command pms_cmd_wakeup = init_cmd(0xe4, 0x00, 0x01);
 
 [[noreturn]] static void task_collect_pm(void *const arg) {
-  pms_config *const station = reinterpret_cast<pms_config *>(arg);
+  pms_station &station{*reinterpret_cast<pms_station *>(arg)};
 
-  pms_response resp;
-  measurement ms{.type = MS_PARTICULATES, .sensor = station->name};
+  pms_response res;
+  pm_measurement_sum sum;
+  measurement ms{.type = measurement_type::MS_PARTICULATES,
+                 .sensor = station.name};
+
+  TickType_t last_wake = xTaskGetTickCount();
 
   while (true) {
-    const int received =
-        uart_read_bytes(station->port, &resp, sizeof(resp), portMAX_DELAY);
+    int sent = station.write_command(pms_cmd_wakeup);
+    if (sent != sizeof(pms_cmd_wakeup)) {
+      ESP_LOGE(kTag, "could not send wakeup command");
+      vTaskDelay(s_to_ticks(1));
+      continue;
+    }
 
-    if (received != sizeof(resp)) {
-      if (received == -1) {
-        ESP_LOGE(kTag, "uart receive failed");
+    // wait for the station to wake up and send us the first command
+    station.flush_input();
+    station.read_response(res, portMAX_DELAY);
+
+    // discard first measurements as recommended by the manual
+    vTaskDelay(s_to_ticks(30));
+    station.flush_input();
+
+    // if MQTT or Wi-Fi are down, queue average measurements to conserve RAM
+    const bool send_each = xEventGroupGetBits(state_evt) & MQTT_READY;
+
+    if (!send_each) {
+      sum.reset();
+    }
+
+    for (int successful = 0; successful < CONFIG_PARTICULATE_MEASUREMENTS;) {
+      const int received = station.read_response(res, s_to_ticks(5));
+
+      if (received != sizeof(res)) {
+        if (received == -1) {
+          ESP_LOGE(kTag, "uart receive failed");
+        }
+        station.flush_input();
+        continue;
       }
-      uart_flush_input(station->port);
-      continue;
+
+      if (res.magic != pms_magic) {
+        ESP_LOGW(kTag, "invalid magic number 0x%x", res.magic);
+        continue;
+      }
+
+      res.swap_bytes();
+
+      if (res.frame_len != pms_frame_len) {
+        ESP_LOGW(kTag, "invalid frame length %d", res.frame_len);
+        continue;
+      }
+
+      const uint16_t checksum = res.calc_checksum();
+      if (checksum != res.checksum) {
+        ESP_LOGW(kTag, "checksum 0x%x, expected 0x%x", res.checksum, checksum);
+        continue;
+      }
+
+      if (send_each) {
+        ms.time = get_timestamp();
+        ms.set_from_response(res);
+        queue_send_retrying(station.queue, &ms, sizeof(ms));
+      } else {
+        sum.add_measurement(res);
+      }
+
+      ESP_LOGI(kTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm1_ug_atm,
+               res.pm2_ug_atm, res.pm10_ug_atm);
+
+      ++successful;
     }
 
-    if (resp.magic != 0x4d42) {
-      ESP_LOGW(kTag, "invalid magic number 0x%x", resp.magic);
-      continue;
+    if (!send_each) {
+      ms.time = get_timestamp();
+      ms.set_avg_from_sum(sum);
     }
 
-    // flip bytes from big-endian to host architecture's little endian
-    std::transform(&resp.frame_len, (&resp.checksum) + 1, &resp.frame_len,
-                   [](uint16_t num) -> uint16_t { return ntohs(num); });
-
-    if (resp.frame_len != pms_frame_len) {
-      ESP_LOGW(kTag, "invalid frame length %d", resp.frame_len);
-      continue;
+    sent = station.write_command(pms_cmd_sleep);
+    if (sent != sizeof(pms_cmd_sleep)) {
+      ESP_LOGE(kTag, "could not send sleep command");
     }
 
-    const uint16_t checksum =
-        std::accumulate(reinterpret_cast<uint8_t *>(&resp.magic),
-                        reinterpret_cast<uint8_t *>(&resp.checksum), 0);
+    if (!send_each) {
+      ESP_LOGI(kTag, "sum PM: 1=%u, 2.5=%u, 10=%u, meas=%u", sum.atm.pm1_ug,
+               sum.atm.pm2_ug, sum.atm.pm10_ug, sum.measurements);
 
-    if (checksum != resp.checksum) {
-      ESP_LOGW(kTag, "received checksum 0x%x, expected 0x%x", resp.checksum,
-               checksum);
-      continue;
+      ESP_LOGI(kTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1_ug,
+               ms.pm.atm.pm2_ug, ms.pm.atm.pm10_ug);
+
+      queue_send_retrying(station.queue, &ms, sizeof(measurement));
     }
 
-    ms.time = get_timestamp();
-
-    ms.pm.atm.pm1_ug = resp.pm1_ug_atm;
-    ms.pm.atm.pm2_ug = resp.pm2_ug_atm;
-    ms.pm.atm.pm10_ug = resp.pm10_ug_atm;
-
-    ms.pm.std.pm1_ug = resp.pm1_ug;
-    ms.pm.std.pm2_ug = resp.pm2_ug;
-    ms.pm.std.pm10_ug = resp.pm10_ug;
-
-    ms.pm.cnt.pm03_cnt = resp.pm03_cnt;
-    ms.pm.cnt.pm05_cnt = resp.pm05_cnt;
-    ms.pm.cnt.pm1_cnt = resp.pm1_cnt;
-    ms.pm.cnt.pm2_cnt = resp.pm2_cnt;
-    ms.pm.cnt.pm5_cnt = resp.pm5_cnt;
-    ms.pm.cnt.pm10_cnt = resp.pm10_cnt;
-
-    queue_send_retrying(station->queue, &ms, sizeof(measurement));
-
-    ESP_LOGI(kTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", resp.pm1_ug_atm,
-             resp.pm2_ug_atm, resp.pm10_ug_atm);
+    vTaskDelayUntil(&last_wake, delay_pm);
   }
 }
 
@@ -728,7 +902,7 @@ static void start_pm_task(const QueueHandle_t ms_queue) {
 
   const size_t rx_buf = sizeof(pms_response) * 10;
 
-  for (pms_config &stat : pms_stations) {
+  for (pms_station &stat : pms_stations) {
     stat.queue = ms_queue;
 
     ESP_ERROR_CHECK(uart_driver_install(stat.port, rx_buf, 0, 0, nullptr, 0));
@@ -795,18 +969,18 @@ static bool mqtt_send_measurement(mqtt_client *const mq,
   const char *type = "";
 
   switch (ms->type) {
-  case MS_TEMPERATURE:
+  case measurement_type::MS_TEMPERATURE:
     format_temp_msg(mq->msg, sizeof(mq->msg), ms);
     type = "meas/temp";
     break;
 
-  case MS_PARTICULATES:
+  case measurement_type::MS_PARTICULATES:
     format_pm_msg(mq->msg, sizeof(mq->msg), ms);
     type = "meas/part";
     break;
 
   default:
-    ESP_LOGE(kTag, "invalid message type %d", ms->type);
+    ESP_LOGE(kTag, "invalid message type %d", static_cast<int>(ms->type));
     return false;
   }
 
