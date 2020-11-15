@@ -1,235 +1,35 @@
+#include "algorithm"
 #include "driver/gpio.h"
 #include "driver/periph_ctrl.h"
 #include "driver/uart.h"
+#include "ds18b20.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_tls.h"
 #include "esp_wifi.h"
-#include "mqtt_client.h"
-#include "nvs.h"
-#include "nvs_flash.h"
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
-#include "freertos/queue.h"
 #include "freertos/task.h"
-
+#include "functional"
 #include "lwip/err.h"
-#include "lwip/sys.h"
-
-#include "time.h"
-
-#include "algorithm"
+#include "mqtt_client.h"
 #include "numeric"
-
-#include "ds18b20.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "owb.h"
 #include "owb_rmt.h"
-#include <algorithm>
+#include "queue.hh"
+#include "time.h"
+#include "timer.hh"
+#include "utils.hh"
 
-static constexpr size_t KiB(const size_t kb) { return kb * 1024; }
-
-static constexpr TickType_t s_to_ticks(const TickType_t seconds) {
-  return seconds * configTICK_RATE_HZ;
-}
-
-static constexpr TickType_t ms_to_ticks(const TickType_t ms) {
-  return pdMS_TO_TICKS(ms);
-}
-
-typedef struct {
-  const char *name;
-  const gpio_num_t pin;
-  const rmt_channel_t rx;
-  const rmt_channel_t tx;
-  QueueHandle_t queue;
-} sensor_config;
-
-enum class measurement_type { MS_TEMPERATURE, MS_PARTICULATES };
-
-struct pms_response {
-  uint16_t magic;
-  uint16_t frame_len;
-  uint16_t pm1_ug;
-  uint16_t pm2_ug;
-  uint16_t pm10_ug;
-  uint16_t pm1_ug_atm;
-  uint16_t pm2_ug_atm;
-  uint16_t pm10_ug_atm;
-  uint16_t pm03_cnt;
-  uint16_t pm05_cnt;
-  uint16_t pm1_cnt;
-  uint16_t pm2_cnt;
-  uint16_t pm5_cnt;
-  uint16_t pm10_cnt;
-  uint16_t reserved;
-  uint16_t checksum;
-
-  uint16_t calc_checksum() const;
-  void swap_bytes();
-} __attribute__((packed));
-
-uint16_t pms_response::calc_checksum() const {
-  return std::accumulate(reinterpret_cast<const uint8_t *>(&magic),
-                         reinterpret_cast<const uint8_t *>(&checksum), 0);
-}
-
-void pms_response::swap_bytes() {
-  std::transform(&frame_len, (&checksum) + 1, &frame_len,
-                 [](uint16_t num) -> uint16_t { return ntohs(num); });
-}
-
-struct pms_command {
-  uint16_t magic;
-  uint8_t command;
-  uint16_t data;
-  uint16_t checksum;
-} __attribute__((packed));
-
-struct pms_station {
-  const char *name;
-  const uart_port_t port;
-  const gpio_num_t rx_pin;
-  const gpio_num_t tx_pin;
-  QueueHandle_t queue;
-
-  int read_response(pms_response &resp, const TickType_t wait) const {
-    return uart_read_bytes(port, &resp, sizeof(resp), wait);
-  }
-
-  int write_command(const pms_command &cmd) const {
-    return uart_write_bytes(port, &cmd, sizeof(cmd));
-  }
-
-  esp_err_t flush_input() const { return uart_flush_input(port); }
-};
-
-struct pm_measurement_sum {
-  uint32_t measurements;
-  struct {
-    uint32_t pm1_ug;
-    uint32_t pm2_ug;
-    uint32_t pm10_ug;
-  } std;
-  struct {
-    uint32_t pm1_ug;
-    uint32_t pm2_ug;
-    uint32_t pm10_ug;
-  } atm;
-  struct {
-    uint32_t pm03_cnt;
-    uint32_t pm05_cnt;
-    uint32_t pm1_cnt;
-    uint32_t pm2_cnt;
-    uint32_t pm5_cnt;
-    uint32_t pm10_cnt;
-  } cnt;
-
-  void add_measurement(const pms_response &resp);
-  void reset();
-} __attribute__((packed));
-
-typedef struct {
-  measurement_type type;
-  time_t time;
-  const char *sensor;
-  union {
-    float temp;
-    struct {
-      struct {
-        uint16_t pm1_ug;
-        uint16_t pm2_ug;
-        uint16_t pm10_ug;
-      } std;
-      struct {
-        uint16_t pm1_ug;
-        uint16_t pm2_ug;
-        uint16_t pm10_ug;
-      } atm;
-      struct {
-        uint16_t pm03_cnt;
-        uint16_t pm05_cnt;
-        uint16_t pm1_cnt;
-        uint16_t pm2_cnt;
-        uint16_t pm5_cnt;
-        uint16_t pm10_cnt;
-      } cnt;
-    } pm;
-  };
-
-  void set_from_response(const pms_response &res) {
-    pm.atm.pm1_ug = res.pm1_ug_atm;
-    pm.atm.pm2_ug = res.pm2_ug_atm;
-    pm.atm.pm10_ug = res.pm10_ug_atm;
-
-    pm.std.pm1_ug = res.pm1_ug;
-    pm.std.pm2_ug = res.pm2_ug;
-    pm.std.pm10_ug = res.pm10_ug;
-
-    pm.cnt.pm03_cnt = res.pm03_cnt;
-    pm.cnt.pm05_cnt = res.pm05_cnt;
-    pm.cnt.pm1_cnt = res.pm1_cnt;
-    pm.cnt.pm2_cnt = res.pm2_cnt;
-    pm.cnt.pm5_cnt = res.pm5_cnt;
-    pm.cnt.pm10_cnt = res.pm10_cnt;
-  }
-
-  void set_avg_from_sum(const pm_measurement_sum &sum) {
-    pm.atm.pm1_ug = sum.atm.pm1_ug / sum.measurements;
-    pm.atm.pm2_ug = sum.atm.pm2_ug / sum.measurements;
-    pm.atm.pm10_ug = sum.atm.pm10_ug / sum.measurements;
-
-    pm.std.pm1_ug = sum.std.pm1_ug / sum.measurements;
-    pm.std.pm2_ug = sum.std.pm2_ug / sum.measurements;
-    pm.std.pm10_ug = sum.std.pm10_ug / sum.measurements;
-
-    pm.cnt.pm03_cnt = sum.cnt.pm03_cnt / sum.measurements;
-    pm.cnt.pm05_cnt = sum.cnt.pm05_cnt / sum.measurements;
-    pm.cnt.pm1_cnt = sum.cnt.pm1_cnt / sum.measurements;
-    pm.cnt.pm2_cnt = sum.cnt.pm2_cnt / sum.measurements;
-    pm.cnt.pm5_cnt = sum.cnt.pm5_cnt / sum.measurements;
-    pm.cnt.pm10_cnt = sum.cnt.pm10_cnt / sum.measurements;
-  }
-} measurement;
-
-static constexpr size_t pms_frame_len = sizeof(pms_response) -
-                                        sizeof(pms_response::magic) -
-                                        sizeof(pms_response::frame_len);
-
-void pm_measurement_sum::reset() { memset(this, 0, sizeof(*this)); }
-
-void pm_measurement_sum::add_measurement(const pms_response &resp) {
-  atm.pm1_ug += resp.pm1_ug_atm;
-  atm.pm2_ug += resp.pm2_ug_atm;
-  atm.pm10_ug += resp.pm10_ug_atm;
-
-  std.pm1_ug += resp.pm1_ug;
-  std.pm2_ug += resp.pm2_ug;
-  std.pm10_ug += resp.pm10_ug;
-
-  cnt.pm03_cnt += resp.pm03_cnt;
-  cnt.pm05_cnt += resp.pm05_cnt;
-  cnt.pm1_cnt += resp.pm1_cnt;
-  cnt.pm2_cnt += resp.pm2_cnt;
-  cnt.pm5_cnt += resp.pm5_cnt;
-  cnt.pm10_cnt += resp.pm10_cnt;
-
-  ++measurements;
-}
-
-static sensor_config temp_sensors[] = {
-    {"room", GPIO_NUM_5, RMT_CHANNEL_0, RMT_CHANNEL_1, NULL},
-    // {"street", 12, RMT_CHANNEL_2, RMT_CHANNEL_3, NULL},
-};
-
-static pms_station pms_stations[] = {
-    {"room", UART_NUM_1, GPIO_NUM_25, GPIO_NUM_27, nullptr},
-};
+// tag for application logs
+static const char *const logTag = CONFIG_DEV_NAME;
 
 struct {
-  const char *dev_name;
+  const char *devName;
   struct {
     const char *ssid;
     const char *pass;
@@ -239,115 +39,350 @@ struct {
     const char *hint;
     const char *psk;
   } mqtt;
-} app_settings;
+} appSettings;
 
 // delay between two temperature measurements
-static const int delay_temp = s_to_ticks(CONFIG_TEMPERATURE_PERIOD_SECONDS);
+static const int delayTemp = secToTicks(CONFIG_TEMPERATURE_PERIOD_SECONDS);
 
 // delay between two particulate matter measurements
-static const int delay_pm = s_to_ticks(CONFIG_PARTICULATE_PERIOD_SECONDS);
+static const int delayPm = secToTicks(CONFIG_PARTICULATE_PERIOD_SECONDS);
 
-static struct {
-  StaticQueue_t queue;
-  measurement buffer[CONFIG_MEASUREMENT_QUEUE_SIZE];
-} measurement_queue;
+struct PmsResponse {
+  uint16_t magic;
+  uint16_t frameLen;
+  uint16_t pm1McgStd;
+  uint16_t pm2McgStd;
+  uint16_t pm10McgStd;
+  uint16_t pm1McgAtm;
+  uint16_t pm2McgAtm;
+  uint16_t pm10McgAtm;
+  uint16_t pm03Count;
+  uint16_t pm05Count;
+  uint16_t pm1Count;
+  uint16_t pm2Count;
+  uint16_t pm5Count;
+  uint16_t pm10Count;
+  uint16_t reserved;
+  uint16_t checksum;
 
-typedef struct {
-  esp_mqtt_client_handle_t handle;
-  psk_hint_key_t *psk_hint;
-  char msg[512];
-  EventGroupHandle_t event;
-  char *cmd_topic;
-  const char *resp_topic;
-} mqtt_client;
+  uint16_t calcChecksum() const;
+  void swapBytes();
+} __attribute__((packed));
 
-typedef struct {
-  const char *const cmd;
-  bool (*handler)(mqtt_client *const client, const esp_mqtt_event_handle_t evt);
-} mqtt_cmd_handler;
+struct PmMeasurementSum {
+  uint32_t count;
+  struct {
+    uint32_t pm1Mcg;
+    uint32_t pm2Mcg;
+    uint32_t pm10Mcg;
+  } std;
+  struct {
+    uint32_t pm1Mcg;
+    uint32_t pm2Mcg;
+    uint32_t pm10Mcg;
+  } atm;
+  struct {
+    uint32_t pm03Count;
+    uint32_t pm05Count;
+    uint32_t pm1Count;
+    uint32_t pm2Count;
+    uint32_t pm5Count;
+    uint32_t pm10Count;
+  } cnt;
 
-static const char *const mqtt_fallback_response_topic = "response/*";
+  void addMeasurement(const PmsResponse &resp);
+  void reset();
+} __attribute__((packed));
 
-// tag for application logs
-static const char *const kTag = "airmon";
+enum class MeasurementType { MS_TEMPERATURE, MS_PARTICULATES };
 
-// UNIX time when the system was booted
-static time_t boot_timestamp = 0;
+struct Measurement {
+  MeasurementType type;
+  time_t time;
+  const char *sensor;
+  union {
+    float temp;
+    struct {
+      struct {
+        uint16_t pm1Mcg;
+        uint16_t pm2Mcg;
+        uint16_t pm10Mcg;
+      } std;
+      struct {
+        uint16_t pm1Mcg;
+        uint16_t pm2Mcg;
+        uint16_t pm10Mcg;
+      } atm;
+      struct {
+        uint16_t pm03Count;
+        uint16_t pm05Count;
+        uint16_t pm1Count;
+        uint16_t pm2Count;
+        uint16_t pm5Count;
+        uint16_t pm10Count;
+      } cnt;
+    } pm;
+  };
+
+  void set(const PmsResponse &res) {
+    pm.atm.pm1Mcg = res.pm1McgAtm;
+    pm.atm.pm2Mcg = res.pm2McgAtm;
+    pm.atm.pm10Mcg = res.pm10McgAtm;
+
+    pm.std.pm1Mcg = res.pm1McgStd;
+    pm.std.pm2Mcg = res.pm2McgStd;
+    pm.std.pm10Mcg = res.pm10McgStd;
+
+    pm.cnt.pm03Count = res.pm03Count;
+    pm.cnt.pm05Count = res.pm05Count;
+    pm.cnt.pm1Count = res.pm1Count;
+    pm.cnt.pm2Count = res.pm2Count;
+    pm.cnt.pm5Count = res.pm5Count;
+    pm.cnt.pm10Count = res.pm10Count;
+  }
+
+  void set(const PmMeasurementSum &sum) {
+    pm.atm.pm1Mcg = sum.atm.pm1Mcg / sum.count;
+    pm.atm.pm2Mcg = sum.atm.pm2Mcg / sum.count;
+    pm.atm.pm10Mcg = sum.atm.pm10Mcg / sum.count;
+
+    pm.std.pm1Mcg = sum.std.pm1Mcg / sum.count;
+    pm.std.pm2Mcg = sum.std.pm2Mcg / sum.count;
+    pm.std.pm10Mcg = sum.std.pm10Mcg / sum.count;
+
+    pm.cnt.pm03Count = sum.cnt.pm03Count / sum.count;
+    pm.cnt.pm05Count = sum.cnt.pm05Count / sum.count;
+    pm.cnt.pm1Count = sum.cnt.pm1Count / sum.count;
+    pm.cnt.pm2Count = sum.cnt.pm2Count / sum.count;
+    pm.cnt.pm5Count = sum.cnt.pm5Count / sum.count;
+    pm.cnt.pm10Count = sum.cnt.pm10Count / sum.count;
+  }
+
+  const char *getType() const {
+    switch (type) {
+
+    case MeasurementType::MS_TEMPERATURE:
+      return "meas/temp";
+
+    case MeasurementType::MS_PARTICULATES:
+      return "meas/part";
+
+    default:
+      return nullptr;
+    }
+  }
+
+  bool formatMsg(char *const msg, const size_t len) const {
+    switch (type) {
+    case MeasurementType::MS_TEMPERATURE: {
+      constexpr auto tpl = R"({"dev":"%s","time":%ld,"sens":"%s","temp":%f})";
+      snprintf(msg, len, tpl, appSettings.devName, time, sensor, temp);
+      return true;
+    }
+
+    case MeasurementType::MS_PARTICULATES: {
+      constexpr auto tpl =
+          R"({"dev":"%s","time":%ld,"sens":"%s","std":{"pm1":%u,"pm2.5":%u,"pm10":%u},"atm":{"pm1":%u,"pm2.5":%u,"pm10":%u},"cnt":{"pm0.3":%u,"pm0.5":%u,"pm1":%u,"pm2.5":%u,"pm5":%u,"pm10":%u}})";
+      snprintf(msg, len, tpl, appSettings.devName, time, sensor, pm.std.pm1Mcg,
+               pm.std.pm2Mcg, pm.std.pm10Mcg, pm.atm.pm1Mcg, pm.atm.pm2Mcg,
+               pm.atm.pm10Mcg, pm.cnt.pm03Count, pm.cnt.pm05Count,
+               pm.cnt.pm1Count, pm.cnt.pm2Count, pm.cnt.pm5Count,
+               pm.cnt.pm10Count);
+      return true;
+    }
+
+    default:
+      ESP_LOGE(logTag, "invalid message type %d", static_cast<int>(type));
+      return false;
+    }
+  }
+};
+
+struct TempSensor {
+  const char *name;
+  const gpio_num_t pin;
+  const rmt_channel_t rxChan;
+  const rmt_channel_t txChan;
+  Queue<Measurement> *queue;
+};
+
+uint16_t PmsResponse::calcChecksum() const {
+  return std::accumulate(reinterpret_cast<const uint8_t *>(&magic),
+                         reinterpret_cast<const uint8_t *>(&checksum), 0);
+}
+
+void PmsResponse::swapBytes() {
+  std::transform(&frameLen, (&checksum) + 1, &frameLen,
+                 [](uint16_t num) -> uint16_t { return ntohs(num); });
+}
+
+struct PmsCommand {
+  uint16_t magic;
+  uint8_t command;
+  uint16_t data;
+  uint16_t checksum;
+} __attribute__((packed));
+
+struct PmsStation {
+  const char *name;
+  const uart_port_t port;
+  const gpio_num_t rxPin;
+  const gpio_num_t txPin;
+  Queue<Measurement> *queue;
+
+  int readResponse(PmsResponse &resp, const TickType_t wait) const {
+    return uart_read_bytes(port, &resp, sizeof(resp), wait);
+  }
+
+  int writeCommand(const PmsCommand &cmd) const {
+    return uart_write_bytes(port, &cmd, sizeof(cmd));
+  }
+
+  esp_err_t flushInput() const { return uart_flush_input(port); }
+};
+
+static constexpr size_t pmsFrameLen = sizeof(PmsResponse) -
+                                      sizeof(PmsResponse::magic) -
+                                      sizeof(PmsResponse::frameLen);
+
+void PmMeasurementSum::reset() { memset(this, 0, sizeof(*this)); }
+
+void PmMeasurementSum::addMeasurement(const PmsResponse &resp) {
+  atm.pm1Mcg += resp.pm1McgAtm;
+  atm.pm2Mcg += resp.pm2McgAtm;
+  atm.pm10Mcg += resp.pm10McgAtm;
+
+  std.pm1Mcg += resp.pm1McgStd;
+  std.pm2Mcg += resp.pm2McgStd;
+  std.pm10Mcg += resp.pm10McgStd;
+
+  cnt.pm03Count += resp.pm03Count;
+  cnt.pm05Count += resp.pm05Count;
+  cnt.pm1Count += resp.pm1Count;
+  cnt.pm2Count += resp.pm2Count;
+  cnt.pm5Count += resp.pm5Count;
+  cnt.pm10Count += resp.pm10Count;
+
+  ++count;
+}
+
+static TempSensor tempSensors[] = {
+    {.name = "room",
+     .pin = GPIO_NUM_5,
+     .rxChan = RMT_CHANNEL_0,
+     .txChan = RMT_CHANNEL_1,
+     .queue = nullptr},
+};
+
+static PmsStation pmsStations[] = {
+    {.name = "room",
+     .port = UART_NUM_1,
+     .rxPin = GPIO_NUM_25,
+     .txPin = GPIO_NUM_27,
+     .queue = nullptr},
+};
 
 enum {
+  MqttReady = BIT0,
+  MqttAck = BIT1,
+};
+
+struct MqttClient {
+  esp_mqtt_client_handle_t handle;
+  psk_hint_key_t *pskHint;
+  char msg[512];
+  EventGroupHandle_t event;
+  char *cmdTopic;
+  const char *respTopic;
+
+  void waitReady() const {
+    xEventGroupWaitBits(event, MqttReady, false, false, portMAX_DELAY);
+  }
+};
+
+struct MqttCmdHandler {
+  const char *const cmd;
+  std::function<bool(MqttClient *const client,
+                     const esp_mqtt_event_handle_t evt)>
+      handler;
+};
+
+static const char *const mqttFallbackResponseTopic = "response/*";
+
+// UNIX time when the system was booted
+static time_t bootTimestamp = 0;
+
+enum AppState {
   STATE_TIME_VALID = BIT0,
   STATE_NET_CONNECTED = BIT1,
   STATE_NET_DISCONNECTED = BIT2,
 };
 
-static EventGroupHandle_t state_evt;
+static EventGroupHandle_t appState;
 
-static void wait_state(const EventBits_t bits) {
-  xEventGroupWaitBits(state_evt, bits, false, true, portMAX_DELAY);
+static void waitState(const AppState bits) {
+  xEventGroupWaitBits(appState, static_cast<EventBits_t>(bits), false, true,
+                      portMAX_DELAY);
 }
-
-enum {
-  MQTT_READY = BIT0,
-  MQTT_ACK = BIT1,
-};
 
 // If time has been initialized, returns it as a UNIX timestamp.
 // Otherwise, returns time in seconds since last boot.
-static time_t get_timestamp() {
+static time_t getTimestamp() {
   const int64_t us_per_sec = 1000 * 1000;
 
-  if (boot_timestamp > 0) {
-    return time(NULL);
+  if (bootTimestamp > 0) {
+    return time(nullptr);
   } else {
     return esp_timer_get_time() / us_per_sec;
   }
 }
 
-static bool mqtt_is_broadcast_cmd(const esp_mqtt_event_handle_t evt) {
+static bool mqttIsBroadcastCmd(const esp_mqtt_event_handle_t evt) {
   return strncmp(evt->topic, "cmd/*", evt->topic_len) == 0;
 }
 
-static bool mqtt_handle_ping(mqtt_client *const client,
-                             const esp_mqtt_event_handle_t evt) {
-  const char *topic = NULL;
-  const char *resp = NULL;
+static bool mqttHandlePing(MqttClient *const client,
+                           const esp_mqtt_event_handle_t evt) {
+  const char *topic;
+  const char *data;
 
-  if (mqtt_is_broadcast_cmd(evt)) {
+  if (mqttIsBroadcastCmd(evt)) {
     char buf[64];
     topic = "response/*";
-    snprintf(buf, sizeof(buf), "pong: %s", app_settings.dev_name);
+    snprintf(buf, sizeof(buf), "pong: %s", appSettings.devName);
+    data = nullptr;
   } else {
-    topic = client->resp_topic;
-    resp = "pong";
+    topic = client->respTopic;
+    data = "pong";
   }
 
-  return esp_mqtt_client_publish(client->handle, topic, resp, 0, 1, 0) != -1;
+  return esp_mqtt_client_publish(client->handle, topic, data, 0, 1, 0) != -1;
 }
 
-_Noreturn static bool mqtt_handle_restart(mqtt_client *const client,
-                                          const esp_mqtt_event_handle_t evt) {
+[[noreturn]] static bool mqttHandleRestart(MqttClient *const client,
+                                           const esp_mqtt_event_handle_t evt) {
   esp_mqtt_client_publish(client->handle, evt->topic, "restarting", 0, 1, 0);
   esp_restart();
 }
 
-static const mqtt_cmd_handler mqtt_handlers[] = {
-    {"ping", mqtt_handle_ping},
-    {"restart", mqtt_handle_restart},
+static const MqttCmdHandler mqttHandlers[] = {
+    {"ping", mqttHandlePing},
+    {"restart", mqttHandleRestart},
 };
 
-static void mqtt_subscribe_to_commands(const mqtt_client *const client) {
+static void mqttSubscribeToCommands(const MqttClient *const client) {
   esp_mqtt_client_subscribe(client->handle, "cmd/*", 2);
-  if (client->cmd_topic) {
-    esp_mqtt_client_subscribe(client->handle, client->cmd_topic, 2);
+  if (client->cmdTopic) {
+    esp_mqtt_client_subscribe(client->handle, client->cmdTopic, 2);
   }
 }
 
-static bool mqtt_handle_message(mqtt_client *const client,
-                                const esp_mqtt_event_handle_t evt) {
-  const size_t num_handlers = sizeof(mqtt_handlers) / sizeof(*mqtt_handlers);
+static bool mqttHandleMessage(MqttClient *const client,
+                              const esp_mqtt_event_handle_t evt) {
+  const size_t num_handlers = sizeof(mqttHandlers) / sizeof(*mqttHandlers);
 
   for (size_t i = 0; i < num_handlers; ++i) {
-    const mqtt_cmd_handler *const handler = &mqtt_handlers[i];
+    const MqttCmdHandler *const handler = &mqttHandlers[i];
     if (strncmp(handler->cmd, evt->data, evt->data_len) == 0) {
       return handler->handler(client, evt);
     }
@@ -356,40 +391,39 @@ static bool mqtt_handle_message(mqtt_client *const client,
   return false;
 }
 
-static esp_err_t mqtt_event_handler(const esp_mqtt_event_handle_t evt) {
-  mqtt_client *const client =
-      reinterpret_cast<mqtt_client *>(evt->user_context);
+static esp_err_t mqttEventHandler(const esp_mqtt_event_handle_t evt) {
+  MqttClient *const client = reinterpret_cast<MqttClient *>(evt->user_context);
 
   switch (evt->event_id) {
   case MQTT_EVENT_CONNECTED:
-    xEventGroupSetBits(client->event, MQTT_READY);
-    mqtt_subscribe_to_commands(client);
-    ESP_LOGI(kTag, "mqtt connected");
+    xEventGroupSetBits(client->event, MqttReady);
+    mqttSubscribeToCommands(client);
+    ESP_LOGI(logTag, "mqtt connected");
     break;
 
   case MQTT_EVENT_DISCONNECTED:
-    xEventGroupClearBits(client->event, MQTT_READY);
-    ESP_LOGI(kTag, "mqtt disconnected");
+    xEventGroupClearBits(client->event, MqttReady);
+    ESP_LOGI(logTag, "mqtt disconnected");
     break;
 
   case MQTT_EVENT_PUBLISHED:
-    xEventGroupSetBits(client->event, MQTT_ACK);
-    ESP_LOGD(kTag, "mqtt broker received message %d", evt->msg_id);
+    xEventGroupSetBits(client->event, MqttAck);
+    ESP_LOGD(logTag, "mqtt broker received message %d", evt->msg_id);
     break;
 
   case MQTT_EVENT_DATA:
-    ESP_LOGI(kTag, "mqtt message received (id %d)", evt->msg_id);
-    if (!mqtt_handle_message(client, evt)) {
-      ESP_LOGI(kTag, "could not handle message (id %d)", evt->msg_id);
+    ESP_LOGI(logTag, "mqtt message received (id %d)", evt->msg_id);
+    if (!mqttHandleMessage(client, evt)) {
+      ESP_LOGI(logTag, "could not handle message (id %d)", evt->msg_id);
     }
     break;
 
   case MQTT_EVENT_SUBSCRIBED:
-    ESP_LOGI(kTag, "mqtt subscription successful (%d)", evt->msg_id);
+    ESP_LOGI(logTag, "mqtt subscription successful (%d)", evt->msg_id);
     break;
 
   case MQTT_EVENT_ERROR:
-    ESP_LOGE(kTag, "mqtt error %d", evt->error_handle->error_type);
+    ESP_LOGE(logTag, "mqtt error %d", evt->error_handle->error_type);
     break;
 
   default:
@@ -400,8 +434,7 @@ static esp_err_t mqtt_event_handler(const esp_mqtt_event_handle_t evt) {
 }
 
 // convert hex string to array of bytes and return how many bytes were stored
-static size_t hex_str_to_bytes(const char *const str, uint8_t *const buf,
-                               const size_t buf_len) {
+static size_t hexStrToBytes(const char *const str, uint8_t *const buf) {
   const size_t hex_len = strlen(str);
   const size_t psk_len = hex_len / 2;
 
@@ -411,73 +444,73 @@ static size_t hex_str_to_bytes(const char *const str, uint8_t *const buf,
     char b[3] = {0, 0, 0};
     b[0] = str[i * 2];
     b[1] = str[i * 2 + 1];
-    buf[i] = strtol(b, NULL, 16);
+    buf[i] = strtol(b, nullptr, 16);
   }
 
   return psk_len;
 }
 
-static char *mqtt_prepare_topic(const char *const prefix,
-                                const char *const suffix) {
+static char *mqttPrepareTopic(const char *const prefix,
+                              const char *const suffix) {
   // prefix + '/' + suffix + '\0'
-  const size_t topic_len = strlen(prefix) + 1 + strlen(suffix) + 1;
-  char *const cmd_topic = new char[topic_len];
-  if (cmd_topic == NULL) {
-    return NULL;
+  const size_t topicLen = strlen(prefix) + 1 + strlen(suffix) + 1;
+  char *const cmdTopic = new char[topicLen];
+  if (cmdTopic == nullptr) {
+    return nullptr;
   }
-  snprintf(cmd_topic, topic_len, "%s/%s", prefix, suffix);
-  return cmd_topic;
+  snprintf(cmdTopic, topicLen, "%s/%s", prefix, suffix);
+  return cmdTopic;
 }
 
-static mqtt_client *mqtt_client_create(const char *const broker_uri,
-                                       const char *const hint,
-                                       const char *const psk_hex) {
-  const size_t hex_len = strlen(psk_hex);
-  if (hex_len % 2) {
-    ESP_LOGE(kTag, "invalid psk hex length");
-    return NULL;
+static MqttClient *mqttClientCreate(const char *const brokerUri,
+                                    const char *const hint,
+                                    const char *const pskHex) {
+  const size_t hexLen = strlen(pskHex);
+  if (hexLen % 2) {
+    ESP_LOGE(logTag, "invalid psk hex length");
+    return nullptr;
   }
 
-  const size_t psk_len = hex_len / 2;
-  uint8_t *const psk = new uint8_t[psk_len];
+  const size_t pskLen = hexLen / 2;
+  uint8_t *const psk = new uint8_t[pskLen];
 
-  if (hex_str_to_bytes(psk_hex, psk, psk_len) != psk_len) {
+  if (hexStrToBytes(pskHex, psk) != pskLen) {
     delete[] psk;
-    ESP_LOGE(kTag, "could not parse psk hex");
-    return NULL;
+    ESP_LOGE(logTag, "could not parse psk hex");
+    return nullptr;
   }
 
-  mqtt_client *const client = new mqtt_client;
-  client->psk_hint = new psk_hint_key_t{
+  MqttClient *const client = new MqttClient;
+  client->pskHint = new psk_hint_key_t{
       .key = psk,
-      .key_size = psk_len,
+      .key_size = pskLen,
       .hint = hint,
   };
 
-  client->cmd_topic = mqtt_prepare_topic("cmd", app_settings.dev_name);
+  client->cmdTopic = mqttPrepareTopic("cmd", appSettings.devName);
 
-  client->resp_topic = mqtt_prepare_topic("response", app_settings.dev_name);
-  if (client->resp_topic == NULL) {
-    ESP_LOGE(kTag, "malloc failed, using fallback mqtt response topic");
-    client->resp_topic = mqtt_fallback_response_topic;
+  client->respTopic = mqttPrepareTopic("response", appSettings.devName);
+  if (client->respTopic == nullptr) {
+    ESP_LOGE(logTag, "malloc failed, using fallback mqtt response topic");
+    client->respTopic = mqttFallbackResponseTopic;
   }
 
   const esp_mqtt_client_config_t conf = {
-      .event_handle = mqtt_event_handler,
-      .uri = broker_uri,
+      .event_handle = mqttEventHandler,
+      .uri = brokerUri,
       .keepalive = 30,
       .user_context = client,
-      .psk_hint_key = client->psk_hint,
+      .psk_hint_key = client->pskHint,
   };
 
   client->handle = esp_mqtt_client_init(&conf);
-  if (client->handle == NULL) {
-    ESP_LOGE(kTag, "esp_mqtt_client_init failed");
+  if (client->handle == nullptr) {
+    ESP_LOGE(logTag, "esp_mqtt_client_init failed");
     goto cleanup;
   }
 
   if (esp_mqtt_client_start(client->handle) != ESP_OK) {
-    ESP_LOGE(kTag, "esp_mqtt_client_start failed");
+    ESP_LOGE(logTag, "esp_mqtt_client_start failed");
     goto cleanup;
   }
 
@@ -487,65 +520,65 @@ static mqtt_client *mqtt_client_create(const char *const broker_uri,
 
 cleanup:
   delete[] psk;
-  delete client->psk_hint;
+  delete client->pskHint;
   delete client;
-  return NULL;
+  return nullptr;
 }
 
-static esp_err_t mqtt_client_free(mqtt_client *const client) {
+static esp_err_t mqttClientFree(MqttClient *const client) {
   if (!client || !client->handle) {
-    ESP_LOGE(kTag, "attempt to free already destroyed mqtt client");
+    ESP_LOGE(logTag, "attempt to free already destroyed mqtt client");
     return ESP_ERR_INVALID_STATE;
   }
 
   esp_mqtt_client_stop(client->handle);
   esp_mqtt_client_destroy(client->handle);
-  client->handle = NULL;
+  client->handle = nullptr;
 
   vEventGroupDelete(client->event);
 
-  if (client->resp_topic != mqtt_fallback_response_topic) {
-    delete[] client->resp_topic;
+  if (client->respTopic != mqttFallbackResponseTopic) {
+    delete[] client->respTopic;
   }
-  delete[] client->cmd_topic;
+  delete[] client->cmdTopic;
   delete client;
 
   return ESP_OK;
 }
 
-static void time_sync_notification(timeval *const tm) {
-  if (boot_timestamp == 0) {
-    boot_timestamp = time(NULL);
-    xEventGroupSetBits(state_evt, STATE_TIME_VALID);
+static void onTimeUpdated(timeval *const tm) {
+  if (bootTimestamp == 0) {
+    bootTimestamp = time(nullptr);
+    xEventGroupSetBits(appState, STATE_TIME_VALID);
   }
-  ESP_LOGI(kTag, "sntp time update finished");
+  ESP_LOGI(logTag, "sntp time update finished");
 }
 
-static void task_sntp_update(void *const arg) {
-  wait_state(STATE_NET_CONNECTED);
+static void taskSntpUpdate(void *const arg) {
+  waitState(STATE_NET_CONNECTED);
 
   sntp_setoperatingmode(SNTP_OPMODE_POLL);
   sntp_setservername(0, "pool.ntp.org");
-  sntp_set_time_sync_notification_cb(time_sync_notification);
+  sntp_set_time_sync_notification_cb(onTimeUpdated);
   sntp_init();
 
-  ESP_LOGI(kTag, "sntp time update started");
+  ESP_LOGI(logTag, "sntp time update started");
 
-  vTaskDelete(NULL);
+  vTaskDelete(nullptr);
 }
 
-static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
+static DS18B20_Info *searchTempSensor(const OneWireBus *const owb) {
   for (bool found = false; !found;) {
     OneWireBus_SearchState search_state;
     const owb_status status = owb_search_first(owb, &search_state, &found);
 
     if (status != OWB_STATUS_OK) {
-      ESP_LOGE(kTag, "owb search failed: %d", status);
-      return NULL;
+      ESP_LOGE(logTag, "owb search failed: %d", status);
+      return nullptr;
     }
     if (!found) {
-      ESP_LOGD(kTag, "temp sensor not found, retrying");
-      vTaskDelay(500 / portTICK_PERIOD_MS);
+      ESP_LOGD(logTag, "temp sensor not found, retrying");
+      vTaskDelay(msToTicks(500));
     }
   }
 
@@ -553,13 +586,13 @@ static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
   const owb_status status = owb_read_rom(owb, &rom_code);
 
   if (status != OWB_STATUS_OK) {
-    ESP_LOGE(kTag, "could not read ROM code: %d", status);
-    return NULL;
+    ESP_LOGE(logTag, "could not read ROM code: %d", status);
+    return nullptr;
   }
 
   char rom_code_s[OWB_ROM_CODE_STRING_LENGTH];
   owb_string_from_rom_code(rom_code, rom_code_s, sizeof(rom_code_s));
-  ESP_LOGI(kTag, "found device 0x%s", rom_code_s);
+  ESP_LOGI(logTag, "found device 0x%s", rom_code_s);
 
   // Create DS18B20 devices on the 1-Wire bus
   DS18B20_Info *const device = ds18b20_malloc(); // heap allocation
@@ -570,106 +603,95 @@ static DS18B20_Info *search_temp_sensor(const OneWireBus *const owb) {
   return device;
 }
 
-static OneWireBus *initialize_bus(owb_rmt_driver_info *const driver_info,
-                                  const sensor_config *const config) {
-  OneWireBus *owb =
-      owb_rmt_initialize(driver_info, config->pin, config->tx, config->rx);
+static OneWireBus *initializeBus(owb_rmt_driver_info *const driver_info,
+                                 const TempSensor *const config) {
+  OneWireBus *owb = owb_rmt_initialize(driver_info, config->pin, config->txChan,
+                                       config->rxChan);
 
   owb_use_crc(owb, true); // enable CRC check for ROM code
 
   return owb;
 }
 
-static void queue_send_retrying(const QueueHandle_t queue,
-                                const void *const data,
-                                const size_t data_size) {
-  int retry = 0;
-  BaseType_t sent;
-  do {
-    sent = xQueueSendToBack(queue, data, s_to_ticks(1));
-    if (sent == errQUEUE_FULL) {
-      uint8_t buf[data_size];
-      xQueueReceive(queue, buf, 0);
-    }
-  } while (sent == errQUEUE_FULL && ++retry < 5);
-}
-
-static void run_temp_measurements(const DS18B20_Info *const device,
-                                  const sensor_config *const config) {
+static void runTempMeasurements(const DS18B20_Info *const device,
+                                const TempSensor *const config) {
   int error_count = 0;
-  measurement ms = {.type = measurement_type::MS_TEMPERATURE,
+  Measurement ms = {.type = MeasurementType::MS_TEMPERATURE,
                     .sensor = config->name};
-  TickType_t last_wake_time = xTaskGetTickCount();
+  TickType_t lastWakeTime = xTaskGetTickCount();
 
   while (error_count < 4) {
     const DS18B20_ERROR err = ds18b20_convert_and_read_temp(device, &ms.temp);
 
     if (err != DS18B20_OK) {
       ++error_count;
-      ESP_LOGW(kTag, "measurement failed in %s, err %d", config->name, err);
+      ESP_LOGW(logTag, "measurement failed in %s, err %d", config->name, err);
     } else {
       error_count = 0;
-      ms.time = get_timestamp();
-      queue_send_retrying(config->queue, &ms, sizeof(ms));
+      ms.time = getTimestamp();
+      if (!config->queue->putRetrying(ms)) {
+        ESP_LOGE(logTag, "could not put temp measurement into queue");
+      }
     }
 
-    vTaskDelayUntil(&last_wake_time, delay_temp);
+    vTaskDelayUntil(&lastWakeTime, delayTemp);
   }
 }
 
-_Noreturn void task_collect_temps(const sensor_config *const config) {
-  ESP_LOGI(kTag, "starting temp collection task for %s", config->name);
+[[noreturn]] void taskCollectTemps(void *const arg) {
+  TempSensor *const sensor = reinterpret_cast<TempSensor *>(arg);
+
+  ESP_LOGI(logTag, "starting temp collection task for %s", sensor->name);
 
   while (true) {
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(secToTicks(2));
 
     owb_rmt_driver_info rmt_driver_info;
-    initialize_bus(&rmt_driver_info, config);
+    initializeBus(&rmt_driver_info, sensor);
 
     OneWireBus *const owb = &rmt_driver_info.bus;
-    DS18B20_Info *device = search_temp_sensor(owb);
+    DS18B20_Info *device = searchTempSensor(owb);
 
     if (device) {
-      run_temp_measurements(device, config);
+      runTempMeasurements(device, sensor);
       ds18b20_free(&device);
     }
 
     owb_uninitialize(owb);
 
-    ESP_LOGE(kTag, "sensor %s failed, restarting", config->name);
+    ESP_LOGE(logTag, "sensor %s failed, restarting", sensor->name);
   }
 }
 
-static void handle_ip_event(void *const arg, const esp_event_base_t event_base,
-                            const int32_t event_id, void *const event_data) {
+static void handleIpEvent(void *const arg, const esp_event_base_t event_base,
+                          const int32_t event_id, void *const event_data) {
   configASSERT(event_base == IP_EVENT);
 
   switch (event_id) {
   case IP_EVENT_STA_GOT_IP: {
-    xEventGroupClearBits(state_evt, STATE_NET_DISCONNECTED);
-    xEventGroupSetBits(state_evt, STATE_NET_CONNECTED);
+    xEventGroupClearBits(appState, STATE_NET_DISCONNECTED);
+    xEventGroupSetBits(appState, STATE_NET_CONNECTED);
 
     const ip_event_got_ip_t *const evt =
         reinterpret_cast<ip_event_got_ip_t *>(event_data);
-    ESP_LOGI(kTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
+    ESP_LOGI(logTag, "got ip %d.%d.%d.%d", IP2STR(&evt->ip_info.ip));
     break;
   }
 
   case IP_EVENT_STA_LOST_IP:
-    xEventGroupClearBits(state_evt, STATE_NET_CONNECTED);
-    xEventGroupSetBits(state_evt, STATE_NET_DISCONNECTED);
-    ESP_LOGI(kTag, "lost ip");
+    xEventGroupClearBits(appState, STATE_NET_CONNECTED);
+    xEventGroupSetBits(appState, STATE_NET_DISCONNECTED);
+    ESP_LOGI(logTag, "lost ip");
     break;
 
   default:
-    ESP_LOGI(kTag, "unexpected ip event %d", event_id);
+    ESP_LOGI(logTag, "unexpected ip event %d", event_id);
     break;
   }
 }
 
-static void handle_wifi_event(void *const arg,
-                              const esp_event_base_t event_base,
-                              const int32_t event_id, void *const event_data) {
+static void handleWifiEvent(void *const arg, const esp_event_base_t event_base,
+                            const int32_t event_id, void *const event_data) {
   configASSERT(event_base == WIFI_EVENT);
 
   switch (event_id) {
@@ -678,22 +700,22 @@ static void handle_wifi_event(void *const arg,
     break;
 
   case WIFI_EVENT_STA_CONNECTED:
-    ESP_LOGI(kTag, "connected to AP");
+    ESP_LOGI(logTag, "connected to AP");
     break;
 
   case WIFI_EVENT_STA_DISCONNECTED:
-    ESP_LOGI(kTag, "disconnected from AP");
+    ESP_LOGI(logTag, "disconnected from AP");
     esp_wifi_connect();
     break;
 
   default:
-    ESP_LOGI(kTag, "unexpected sta event %d", event_id);
+    ESP_LOGI(logTag, "unexpected sta event %d", event_id);
     break;
   }
 }
 
 // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-lwip-init-phase
-static void app_init_wifi() {
+static void initWifi() {
   // initialize LwIP and main event loop
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -707,10 +729,10 @@ static void app_init_wifi() {
 
   // bind event handlers
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
-      WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, NULL, NULL));
+      WIFI_EVENT, ESP_EVENT_ANY_ID, handleWifiEvent, nullptr, nullptr));
 
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
-      IP_EVENT, ESP_EVENT_ANY_ID, handle_ip_event, NULL, NULL));
+      IP_EVENT, ESP_EVENT_ANY_ID, handleIpEvent, nullptr, nullptr));
 
   wifi_scan_threshold_t thres{
       .authmode = WIFI_AUTH_WPA2_PSK,
@@ -723,9 +745,9 @@ static void app_init_wifi() {
           .pmf_cfg{.capable = true, .required = false},
       },
   };
-  strncpy((char *)wf_conf.sta.ssid, app_settings.wifi.ssid,
+  strncpy((char *)wf_conf.sta.ssid, appSettings.wifi.ssid,
           sizeof(wf_conf.sta.ssid));
-  strncpy((char *)wf_conf.sta.password, app_settings.wifi.pass,
+  strncpy((char *)wf_conf.sta.password, appSettings.wifi.pass,
           sizeof(wf_conf.sta.password));
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -733,7 +755,7 @@ static void app_init_wifi() {
   ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-static void app_init_log() {
+static void initLog() {
 #ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_DEBUG);
 #else
@@ -741,156 +763,151 @@ static void app_init_log() {
 #endif
 }
 
-static QueueHandle_t make_measurement_queue() {
-  const size_t item_size = sizeof(*measurement_queue.buffer);
-
-  const QueueHandle_t queue = xQueueCreateStatic(
-      sizeof(measurement_queue.buffer) / item_size, item_size,
-      (uint8_t *)measurement_queue.buffer, &measurement_queue.queue);
-
-  configASSERT(queue);
-
-  return queue;
-}
-
-static void start_temp_tasks(const QueueHandle_t ms_queue) {
-  const size_t len = sizeof(temp_sensors) / sizeof(*temp_sensors);
+static void startTempTasks(Queue<Measurement> &ms_queue) {
+  const size_t len = sizeof(tempSensors) / sizeof(*tempSensors);
   char name[24];
 
   for (int i = 0; i < len; ++i) {
-    sensor_config *const conf = &temp_sensors[i];
-    conf->queue = ms_queue;
+    TempSensor *const conf = &tempSensors[i];
+    conf->queue = &ms_queue;
 
     snprintf(name, sizeof(name), "ms_temp_%d", conf->pin);
 
-    xTaskCreate((TaskFunction_t)task_collect_temps, name, KiB(2), conf, 2,
-                NULL);
+    xTaskCreate(taskCollectTemps, name, KiB(2), conf, 2, nullptr);
   }
 }
 
-static constexpr uint16_t pms_magic = 0x4d42;
+static constexpr uint16_t pmsMagic = 0x4d42;
 
-static constexpr pms_command init_cmd(uint8_t cmd, uint8_t datah,
-                                      uint8_t datal) {
-  return pms_command{
-      .magic = pms_magic,
+static constexpr PmsCommand initCmd(uint8_t cmd, uint8_t datah, uint8_t datal) {
+  return PmsCommand{
+      .magic = pmsMagic,
       .command = cmd,
       .data = PP_HTONS((datah << 8) + datal),
       .checksum = PP_HTONS(0x4d + 0x42 + cmd + datal + datah),
   };
 }
 
-static constexpr pms_command pms_cmd_read = init_cmd(0xe2, 0x00, 0x00);
+static constexpr PmsCommand pmsCmdRead = initCmd(0xe2, 0x00, 0x00);
 
-static constexpr pms_command pms_cmd_mode_passive = init_cmd(0xe1, 0x00, 0x00);
+static constexpr PmsCommand pmsCmdModePassive = initCmd(0xe1, 0x00, 0x00);
 
-static constexpr pms_command pms_cmd_mode_active = init_cmd(0xe1, 0x00, 0x01);
+static constexpr PmsCommand pmsCmdModeActive = initCmd(0xe1, 0x00, 0x01);
 
-static constexpr pms_command pms_cmd_sleep = init_cmd(0xe4, 0x00, 0x00);
+static constexpr PmsCommand pmsCmdSleep = initCmd(0xe4, 0x00, 0x00);
 
-static constexpr pms_command pms_cmd_wakeup = init_cmd(0xe4, 0x00, 0x01);
+static constexpr PmsCommand pmsCmdWakeup = initCmd(0xe4, 0x00, 0x01);
 
-[[noreturn]] static void task_collect_pm(void *const arg) {
-  pms_station &station{*reinterpret_cast<pms_station *>(arg)};
+[[noreturn]] static void taskCollectPm(void *const arg) {
+  PmsStation &station{*reinterpret_cast<PmsStation *>(arg)};
 
-  pms_response res;
-  pm_measurement_sum sum;
-  measurement ms{.type = measurement_type::MS_PARTICULATES,
+  PmsResponse res;
+  PmMeasurementSum sum;
+  Measurement ms{.type = MeasurementType::MS_PARTICULATES,
                  .sensor = station.name};
 
-  TickType_t last_wake = xTaskGetTickCount();
+  TickType_t lastWake = xTaskGetTickCount();
 
   while (true) {
-    int sent = station.write_command(pms_cmd_wakeup);
-    if (sent != sizeof(pms_cmd_wakeup)) {
-      ESP_LOGE(kTag, "could not send wakeup command");
-      vTaskDelay(s_to_ticks(1));
+    int sent = station.writeCommand(pmsCmdWakeup);
+    if (sent != sizeof(pmsCmdWakeup)) {
+      ESP_LOGE(logTag, "could not send wakeup command");
+      vTaskDelay(secToTicks(1));
       continue;
     }
 
     // wait for the station to wake up and send us the first command
-    station.flush_input();
-    station.read_response(res, portMAX_DELAY);
+    station.flushInput();
+    station.readResponse(res, portMAX_DELAY);
 
     // discard first measurements as recommended by the manual
-    vTaskDelay(s_to_ticks(30));
-    station.flush_input();
+    vTaskDelay(secToTicks(30));
+    station.flushInput();
 
     // if MQTT or Wi-Fi are down, queue average measurements to conserve RAM
-    const bool send_each = xEventGroupGetBits(state_evt) & MQTT_READY;
+    const bool sendEach = xEventGroupGetBits(appState) & MqttReady;
 
-    if (!send_each) {
+    if (!sendEach) {
       sum.reset();
     }
 
+    Timer execTime;
+
     for (int successful = 0; successful < CONFIG_PARTICULATE_MEASUREMENTS;) {
-      const int received = station.read_response(res, s_to_ticks(5));
+      const int received = station.readResponse(res, secToTicks(5));
 
       if (received != sizeof(res)) {
         if (received == -1) {
-          ESP_LOGE(kTag, "uart receive failed");
+          ESP_LOGE(logTag, "uart receive failed");
         }
-        station.flush_input();
+        station.flushInput();
         continue;
       }
 
-      if (res.magic != pms_magic) {
-        ESP_LOGW(kTag, "invalid magic number 0x%x", res.magic);
+      if (res.magic != pmsMagic) {
+        ESP_LOGW(logTag, "invalid magic number 0x%x", res.magic);
+        station.flushInput();
         continue;
       }
 
-      res.swap_bytes();
+      res.swapBytes();
 
-      if (res.frame_len != pms_frame_len) {
-        ESP_LOGW(kTag, "invalid frame length %d", res.frame_len);
+      if (res.frameLen != pmsFrameLen) {
+        ESP_LOGW(logTag, "invalid frame length %d", res.frameLen);
+        station.flushInput();
         continue;
       }
 
-      const uint16_t checksum = res.calc_checksum();
+      const uint16_t checksum = res.calcChecksum();
       if (checksum != res.checksum) {
-        ESP_LOGW(kTag, "checksum 0x%x, expected 0x%x", res.checksum, checksum);
+        ESP_LOGW(logTag, "checksum 0x%x, expected 0x%x", res.checksum,
+                 checksum);
+        station.flushInput();
         continue;
       }
 
-      if (send_each) {
-        ms.time = get_timestamp();
-        ms.set_from_response(res);
-        queue_send_retrying(station.queue, &ms, sizeof(ms));
+      if (sendEach) {
+        ms.time = getTimestamp();
+        ms.set(res);
+        if (!station.queue->putRetrying(ms)) {
+          ESP_LOGE(logTag, "could not queue particulate measurement");
+        }
       } else {
-        sum.add_measurement(res);
+        sum.addMeasurement(res);
       }
 
-      ESP_LOGI(kTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm1_ug_atm,
-               res.pm2_ug_atm, res.pm10_ug_atm);
+      ESP_LOGI(logTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm1McgAtm,
+               res.pm2McgAtm, res.pm10McgAtm);
 
       ++successful;
     }
 
-    if (!send_each) {
-      ms.time = get_timestamp();
-      ms.set_avg_from_sum(sum);
+    ESP_LOGI(logTag, "measurement finished in %u s", execTime.seconds());
+
+    if (!sendEach) {
+      ms.time = getTimestamp();
+      ms.set(sum);
     }
 
-    sent = station.write_command(pms_cmd_sleep);
-    if (sent != sizeof(pms_cmd_sleep)) {
-      ESP_LOGE(kTag, "could not send sleep command");
+    sent = station.writeCommand(pmsCmdSleep);
+    if (sent != sizeof(pmsCmdSleep)) {
+      ESP_LOGE(logTag, "could not send sleep command");
     }
 
-    if (!send_each) {
-      ESP_LOGI(kTag, "sum PM: 1=%u, 2.5=%u, 10=%u, meas=%u", sum.atm.pm1_ug,
-               sum.atm.pm2_ug, sum.atm.pm10_ug, sum.measurements);
+    if (!sendEach) {
+      ESP_LOGI(logTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1Mcg,
+               ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
 
-      ESP_LOGI(kTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1_ug,
-               ms.pm.atm.pm2_ug, ms.pm.atm.pm10_ug);
-
-      queue_send_retrying(station.queue, &ms, sizeof(measurement));
+      if (!station.queue->putRetrying(ms)) {
+        ESP_LOGE(logTag, "could not queue averaged particulate measurement");
+      }
     }
 
-    vTaskDelayUntil(&last_wake, delay_pm);
+    vTaskDelayUntil(&lastWake, delayPm);
   }
 }
 
-static void start_pm_task(const QueueHandle_t ms_queue) {
+static void startPmTasks(Queue<Measurement> &ms_queue) {
   const uart_config_t conf{
       .baud_rate = 9600,
       .data_bits = UART_DATA_8_BITS,
@@ -900,94 +917,40 @@ static void start_pm_task(const QueueHandle_t ms_queue) {
       .source_clk = UART_SCLK_APB,
   };
 
-  const size_t rx_buf = sizeof(pms_response) * 10;
+  const size_t rxBuf = sizeof(PmsResponse) * 10;
 
-  for (pms_station &stat : pms_stations) {
-    stat.queue = ms_queue;
+  for (PmsStation &stat : pmsStations) {
+    stat.queue = &ms_queue;
 
-    ESP_ERROR_CHECK(uart_driver_install(stat.port, rx_buf, 0, 0, nullptr, 0));
+    ESP_ERROR_CHECK(uart_driver_install(stat.port, rxBuf, 0, 0, nullptr, 0));
     ESP_ERROR_CHECK(uart_param_config(stat.port, &conf));
-    ESP_ERROR_CHECK(uart_set_pin(stat.port, stat.tx_pin, stat.rx_pin,
+    ESP_ERROR_CHECK(uart_set_pin(stat.port, stat.txPin, stat.rxPin,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
-    xTaskCreate(task_collect_pm, "ms_pm", KiB(2), &stat, 4, nullptr);
+    xTaskCreate(taskCollectPm, "ms_pm", KiB(2), &stat, 4, nullptr);
   }
 }
 
-static bool is_valid_timestamp(const time_t ts) {
-  const time_t min_valid_ts = 1577836800; // 2020-01-01 UTC
-  return ts >= min_valid_ts;
+constexpr time_t minValidTimestamp = 1577836800; // 2020-01-01 UTC
+
+static constexpr bool isValidTimestamp(const time_t ts) {
+  return ts >= minValidTimestamp;
 }
 
-static void format_temp_msg(char *const msg, const size_t len,
-                            const measurement *const ms) {
-  snprintf(msg, len,
-           "{"
-           "\"dev\":\"%s\","
-           "\"time\":%ld,"
-           "\"sens\":\"%s\","
-           "\"temp\":%f"
-           "}",
-           app_settings.dev_name, ms->time, ms->sensor, ms->temp);
-}
+static bool mqttSendMeasurement(MqttClient *const mq, const Measurement &ms) {
+  const char *type = ms.getType();
+  if (type == nullptr) {
+    return false;
+  }
 
-static void format_pm_msg(char *const msg, const size_t len,
-                          const measurement *const ms) {
-  snprintf(msg, len,
-           "{"
-           "\"dev\":\"%s\","
-           "\"time\":%ld,"
-           "\"sens\":\"%s\","
-           "\"std\":{"
-           "\"pm1\":%u,"
-           "\"pm2.5\":%u,"
-           "\"pm10\":%u"
-           "},"
-           "\"atm\":{"
-           "\"pm1\":%u,"
-           "\"pm2.5\":%u,"
-           "\"pm10\":%u"
-           "},"
-           "\"cnt\":{"
-           "\"pm0.3\":%u,"
-           "\"pm0.5\":%u,"
-           "\"pm1\":%u,"
-           "\"pm2.5\":%u,"
-           "\"pm5\":%u,"
-           "\"pm10\":%u"
-           "}"
-           "}",
-           app_settings.dev_name, ms->time, ms->sensor, ms->pm.std.pm1_ug,
-           ms->pm.std.pm2_ug, ms->pm.std.pm10_ug, ms->pm.atm.pm1_ug,
-           ms->pm.atm.pm2_ug, ms->pm.atm.pm10_ug, ms->pm.cnt.pm03_cnt,
-           ms->pm.cnt.pm05_cnt, ms->pm.cnt.pm1_cnt, ms->pm.cnt.pm2_cnt,
-           ms->pm.cnt.pm5_cnt, ms->pm.cnt.pm10_cnt);
-}
-
-static bool mqtt_send_measurement(mqtt_client *const mq,
-                                  const measurement *const ms) {
-  const char *type = "";
-
-  switch (ms->type) {
-  case measurement_type::MS_TEMPERATURE:
-    format_temp_msg(mq->msg, sizeof(mq->msg), ms);
-    type = "meas/temp";
-    break;
-
-  case measurement_type::MS_PARTICULATES:
-    format_pm_msg(mq->msg, sizeof(mq->msg), ms);
-    type = "meas/part";
-    break;
-
-  default:
-    ESP_LOGE(kTag, "invalid message type %d", static_cast<int>(ms->type));
+  if (!ms.formatMsg(mq->msg, sizeof(mq->msg))) {
     return false;
   }
 
   for (int result = -1; result < 0;) {
     result = esp_mqtt_client_publish(mq->handle, type, mq->msg, 0, 1, 1);
     if (result < 0) {
-      ESP_LOGI(kTag, "mqtt publish failed, retrying");
+      ESP_LOGI(logTag, "mqtt publish failed, retrying");
       vTaskDelay(pdMS_TO_TICKS(10000));
     }
   }
@@ -995,16 +958,12 @@ static bool mqtt_send_measurement(mqtt_client *const mq,
   return true;
 }
 
-static void mqtt_client_wait_ready(mqtt_client *const client) {
-  xEventGroupWaitBits(client->event, MQTT_READY, false, false, portMAX_DELAY);
+static void restartPeripheral(const periph_module_t mod) {
+  periph_module_disable(mod);
+  periph_module_enable(mod);
 }
 
-static void restart_peripheral(const periph_module_t module) {
-  periph_module_disable(module);
-  periph_module_enable(module);
-}
-
-static void app_init_nvs() {
+static void initNvs() {
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
       err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1014,107 +973,109 @@ static void app_init_nvs() {
   ESP_ERROR_CHECK(err);
 }
 
-static esp_err_t read_setting_str(nvs_handle_t nvs, const char *const name,
-                                  const char **const dst) {
-  ESP_LOGI(kTag, "reading setting %s from NVS", name);
+static esp_err_t readStringSetting(nvs_handle_t nvs, const char *const name,
+                                   const char **const dst) {
+  ESP_LOGI(logTag, "reading setting %s from NVS", name);
 
   size_t len;
-  esp_err_t err = nvs_get_str(nvs, name, NULL, &len);
+  esp_err_t err = nvs_get_str(nvs, name, nullptr, &len);
   if (err != ESP_OK) {
-    ESP_LOGI(kTag, "setting %s not found or not available: %x", name, err);
+    ESP_LOGI(logTag, "setting %s not found or not available: %x", name, err);
     return err;
   }
   char *const buf = new char[len];
-  if (buf == NULL) {
-    ESP_LOGE(kTag, "malloc failed in read_setting_str");
+  if (buf == nullptr) {
+    ESP_LOGE(logTag, "malloc failed in read_setting_str");
     return ESP_ERR_NO_MEM;
   }
   err = nvs_get_str(nvs, name, buf, &len);
   if (err == ESP_OK) {
     *dst = buf;
-    ESP_LOGI(kTag, "setting %s read: [%s]", name, buf);
+    ESP_LOGI(logTag, "setting %s read: [%s]", name, buf);
   } else {
     delete[] buf;
-    ESP_LOGE(kTag, "could not read setting %s: %x", name, err);
+    ESP_LOGE(logTag, "could not read setting %s: %x", name, err);
   }
   return err;
 }
 
-static esp_err_t app_read_settings() {
-  app_settings.dev_name = CONFIG_DEV_NAME;
-  app_settings.wifi.ssid = CONFIG_WIFI_SSID;
-  app_settings.wifi.pass = CONFIG_WIFI_PASSWORD;
-  app_settings.mqtt.broker = CONFIG_MQTT_BROKER_URI;
-  app_settings.mqtt.hint = CONFIG_MQTT_HINT;
-  app_settings.mqtt.psk = CONFIG_MQTT_PSK;
+static esp_err_t readSettings() {
+  appSettings.devName = CONFIG_DEV_NAME;
+  appSettings.wifi.ssid = CONFIG_WIFI_SSID;
+  appSettings.wifi.pass = CONFIG_WIFI_PASSWORD;
+  appSettings.mqtt.broker = CONFIG_MQTT_BROKER_URI;
+  appSettings.mqtt.hint = CONFIG_MQTT_HINT;
+  appSettings.mqtt.psk = CONFIG_MQTT_PSK;
 
   nvs_handle_t nvs;
 
   const esp_err_t err = nvs_open("storage", NVS_READONLY, &nvs);
   if (err != ESP_OK) {
-    ESP_LOGE(kTag, "could not open NVS for reading settings: %d", err);
+    ESP_LOGE(logTag, "could not open NVS for reading settings: %d", err);
     return err;
   }
 
-  read_setting_str(nvs, "dev/name", &app_settings.dev_name);
-  read_setting_str(nvs, "wifi/ssid", &app_settings.wifi.ssid);
-  read_setting_str(nvs, "wifi/pass", &app_settings.wifi.pass);
-  read_setting_str(nvs, "mqtt/broker", &app_settings.mqtt.broker);
-  read_setting_str(nvs, "mqtt/hint", &app_settings.mqtt.hint);
-  read_setting_str(nvs, "mqtt/psk", &app_settings.mqtt.psk);
+  readStringSetting(nvs, "dev/name", &appSettings.devName);
+  readStringSetting(nvs, "wifi/ssid", &appSettings.wifi.ssid);
+  readStringSetting(nvs, "wifi/pass", &appSettings.wifi.pass);
+  readStringSetting(nvs, "mqtt/broker", &appSettings.mqtt.broker);
+  readStringSetting(nvs, "mqtt/hint", &appSettings.mqtt.hint);
+  readStringSetting(nvs, "mqtt/psk", &appSettings.mqtt.psk);
 
   nvs_close(nvs);
 
   return ESP_OK;
 }
 
-extern "C" _Noreturn void app_main() {
-  app_init_log();
+void initSntp() {
+  xTaskCreate(taskSntpUpdate, "sntp_update", KiB(2), nullptr, 1, nullptr);
+}
+
+extern "C" [[noreturn]] void app_main() {
+  appState = xEventGroupCreate();
 
   // reset peripherals in case of prior crash
-  restart_peripheral(PERIPH_RMT_MODULE);
-  restart_peripheral(PERIPH_UART0_MODULE);
+  restartPeripheral(PERIPH_RMT_MODULE);
+  restartPeripheral(PERIPH_UART0_MODULE);
 
-  state_evt = xEventGroupCreate();
-
-  app_init_nvs();
-  app_read_settings();
-  app_init_wifi();
-
-  xTaskCreate(task_sntp_update, "sntp_update", KiB(2), NULL, 1, NULL);
+  initLog();
+  initNvs();
+  readSettings();
+  initWifi();
+  initSntp();
 
   // start pollution collectors right away, we can fix time later
-  const QueueHandle_t ms_queue = make_measurement_queue();
-  start_temp_tasks(ms_queue);
-  start_pm_task(ms_queue);
+  Queue<Measurement> queue{CONFIG_MEASUREMENT_QUEUE_SIZE};
+  startTempTasks(queue);
+  startPmTasks(queue);
 
-  wait_state(STATE_NET_CONNECTED);
+  waitState(STATE_NET_CONNECTED);
 
-  mqtt_client *const client = mqtt_client_create(
-      app_settings.mqtt.broker, app_settings.mqtt.hint, app_settings.mqtt.psk);
+  MqttClient *const client = mqttClientCreate(
+      appSettings.mqtt.broker, appSettings.mqtt.hint, appSettings.mqtt.psk);
 
   if (!client) {
-    ESP_LOGE(kTag, "could not initialize mqtt client");
+    ESP_LOGE(logTag, "could not initialize mqtt client");
     esp_restart();
   }
 
-  wait_state(STATE_TIME_VALID);
+  waitState(STATE_TIME_VALID);
 
-  for (measurement ms;;) {
-    mqtt_client_wait_ready(client);
+  for (Measurement ms;;) {
+    client->waitReady();
 
-    xQueueReceive(ms_queue, &ms, portMAX_DELAY);
+    queue.takeInto(ms);
 
     // fix time if it was assigned before SNTP data became available
-    if (!is_valid_timestamp(ms.time)) {
-      ms.time += boot_timestamp;
+    if (!isValidTimestamp(ms.time)) {
+      ms.time += bootTimestamp;
     }
 
-    if (!mqtt_send_measurement(client, &ms)) {
-      ESP_LOGE(kTag, "measurement send failed");
+    if (!mqttSendMeasurement(client, ms)) {
+      ESP_LOGE(logTag, "measurement send failed");
     }
   }
 
-  mqtt_client_free(client);
+  mqttClientFree(client);
   esp_restart();
 }

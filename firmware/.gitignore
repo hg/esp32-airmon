@@ -4,3 +4,5 @@ sdkconfig
 sdkconfig.old
 compile_commands.json
 
+.cache/
+cmake-build-debug/
