@@ -4,7 +4,10 @@
 #include "driver/uart.h"
 #include "ds18b20.h"
 #include "esp_event.h"
+#include "esp_http_client.h"
+#include "esp_https_ota.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_tls.h"
@@ -28,6 +31,17 @@
 // tag for application logs
 static const char *const logTag = CONFIG_DEV_NAME;
 
+extern const uint8_t caPemStart[] asm("_binary_ca_pem_start");
+
+// UNIX time when the system was booted
+static time_t bootTimestamp = 0;
+
+constexpr time_t minValidTimestamp = 1577836800; // 2020-01-01 UTC
+
+static constexpr bool isValidTimestamp(const time_t ts) {
+  return ts >= minValidTimestamp;
+}
+
 struct {
   const char *devName;
   struct {
@@ -36,8 +50,8 @@ struct {
   } wifi;
   struct {
     const char *broker;
-    const char *hint;
-    const char *psk;
+    const char *username;
+    const char *password;
   } mqtt;
 } appSettings;
 
@@ -123,6 +137,13 @@ struct Measurement {
       } cnt;
     } pm;
   };
+
+  // fixes time if it was assigned before SNTP data became available
+  void fixTime() {
+    if (!isValidTimestamp(time)) {
+      time += bootTimestamp;
+    }
+  }
 
   void set(const PmsResponse &res) {
     pm.atm.pm1Mcg = res.pm1McgAtm;
@@ -289,28 +310,39 @@ enum {
 
 struct MqttClient {
   esp_mqtt_client_handle_t handle;
-  psk_hint_key_t *pskHint;
-  char msg[512];
   EventGroupHandle_t event;
   char *cmdTopic;
   const char *respTopic;
+  const char *cert;
 
   void waitReady() const {
     xEventGroupWaitBits(event, MqttReady, false, false, portMAX_DELAY);
   }
+
+  bool send(const char *const topic, const char *const data) {
+    for (int result = -1; result < 0;) {
+      result = esp_mqtt_client_publish(handle, topic, data, 0, 1, 1);
+      if (result < 0) {
+        ESP_LOGI(logTag, "mqtt publish failed, retrying");
+        vTaskDelay(secToTicks(5));
+      }
+    }
+
+    return true;
+  }
 };
+
+using MqttHandlerFunc = bool(MqttClient *const client,
+                             const esp_mqtt_event_handle_t evt,
+                             const char *const respTopic,
+                             const char *const args);
 
 struct MqttCmdHandler {
   const char *const cmd;
-  std::function<bool(MqttClient *const client,
-                     const esp_mqtt_event_handle_t evt)>
-      handler;
+  std::function<MqttHandlerFunc> handler;
 };
 
 static const char *const mqttFallbackResponseTopic = "response/*";
-
-// UNIX time when the system was booted
-static time_t bootTimestamp = 0;
 
 enum AppState {
   STATE_TIME_VALID = BIT0,
@@ -342,32 +374,57 @@ static bool mqttIsBroadcastCmd(const esp_mqtt_event_handle_t evt) {
 }
 
 static bool mqttHandlePing(MqttClient *const client,
-                           const esp_mqtt_event_handle_t evt) {
-  const char *topic;
+                           const esp_mqtt_event_handle_t evt,
+                           const char *const respTopic,
+                           const char *const args) {
   const char *data;
+  char buf[64];
 
   if (mqttIsBroadcastCmd(evt)) {
-    char buf[64];
-    topic = "response/*";
     snprintf(buf, sizeof(buf), "pong: %s", appSettings.devName);
-    data = nullptr;
+    data = buf;
   } else {
-    topic = client->respTopic;
     data = "pong";
   }
 
-  return esp_mqtt_client_publish(client->handle, topic, data, 0, 1, 0) != -1;
+  return esp_mqtt_client_publish(client->handle, respTopic, data, 0, 1, 0) !=
+         -1;
 }
 
 [[noreturn]] static bool mqttHandleRestart(MqttClient *const client,
-                                           const esp_mqtt_event_handle_t evt) {
-  esp_mqtt_client_publish(client->handle, evt->topic, "restarting", 0, 1, 0);
+                                           const esp_mqtt_event_handle_t evt,
+                                           const char *const respTopic,
+                                           const char *const args) {
+  esp_mqtt_client_publish(client->handle, respTopic, "restarting", 0, 1, 0);
   esp_restart();
+}
+
+static bool mqttHandleOta(MqttClient *const client,
+                          const esp_mqtt_event_handle_t evt,
+                          const char *const respTopic, const char *const args) {
+  const esp_http_client_config_t config{
+      .url = args,
+      .cert_pem = client->cert,
+  };
+
+  const esp_err_t ret = esp_https_ota(&config);
+
+  if (ret == ESP_OK) {
+    ESP_LOGI(logTag, "OTA update finished");
+    esp_mqtt_client_publish(evt->client, respTopic, "OTA success", 0, 1, 0);
+    esp_restart();
+  }
+
+  ESP_LOGE(logTag, "could not perform OTA update: 0x%x", ret);
+  esp_mqtt_client_publish(evt->client, respTopic, "OTA failed", 0, 1, 0);
+
+  return false;
 }
 
 static const MqttCmdHandler mqttHandlers[] = {
     {"ping", mqttHandlePing},
     {"restart", mqttHandleRestart},
+    {"ota", mqttHandleOta},
 };
 
 static void mqttSubscribeToCommands(const MqttClient *const client) {
@@ -379,12 +436,34 @@ static void mqttSubscribeToCommands(const MqttClient *const client) {
 
 static bool mqttHandleMessage(MqttClient *const client,
                               const esp_mqtt_event_handle_t evt) {
-  const size_t num_handlers = sizeof(mqttHandlers) / sizeof(*mqttHandlers);
+  constexpr size_t numHandlers = sizeof(mqttHandlers) / sizeof(*mqttHandlers);
 
-  for (size_t i = 0; i < num_handlers; ++i) {
-    const MqttCmdHandler *const handler = &mqttHandlers[i];
-    if (strncmp(handler->cmd, evt->data, evt->data_len) == 0) {
-      return handler->handler(client, evt);
+  for (size_t i = 0; i < numHandlers; ++i) {
+    const MqttCmdHandler &handler = mqttHandlers[i];
+    const size_t cmdLen = strlen(handler.cmd);
+
+    if (evt->data_len < cmdLen) {
+      continue;
+    }
+    if (strncmp(handler.cmd, evt->data, cmdLen)) {
+      continue;
+    }
+
+    const char *const topic =
+        mqttIsBroadcastCmd(evt) ? "response/*" : client->respTopic;
+
+    if (evt->data_len > cmdLen) {
+      size_t argsPos = cmdLen;
+      if (isspace(evt->data[argsPos])) {
+        ++argsPos;
+      }
+      char args[evt->data_len - argsPos + 1];
+      strncpy(args, &evt->data[argsPos], sizeof(args));
+      args[sizeof(args) - 1] = '\0';
+
+      return handler.handler(client, evt, topic, args);
+    } else {
+      return handler.handler(client, evt, topic, nullptr);
     }
   }
 
@@ -433,96 +512,44 @@ static esp_err_t mqttEventHandler(const esp_mqtt_event_handle_t evt) {
   return ESP_OK;
 }
 
-// convert hex string to array of bytes and return how many bytes were stored
-static size_t hexStrToBytes(const char *const str, uint8_t *const buf) {
-  const size_t hex_len = strlen(str);
-  const size_t psk_len = hex_len / 2;
-
-  configASSERT(hex_len % 2 == 0);
-
-  for (size_t i = 0; i < psk_len; ++i) {
-    char b[3] = {0, 0, 0};
-    b[0] = str[i * 2];
-    b[1] = str[i * 2 + 1];
-    buf[i] = strtol(b, nullptr, 16);
-  }
-
-  return psk_len;
-}
-
 static char *mqttPrepareTopic(const char *const prefix,
                               const char *const suffix) {
   // prefix + '/' + suffix + '\0'
   const size_t topicLen = strlen(prefix) + 1 + strlen(suffix) + 1;
   char *const cmdTopic = new char[topicLen];
-  if (cmdTopic == nullptr) {
-    return nullptr;
-  }
   snprintf(cmdTopic, topicLen, "%s/%s", prefix, suffix);
   return cmdTopic;
 }
 
 static MqttClient *mqttClientCreate(const char *const brokerUri,
-                                    const char *const hint,
-                                    const char *const pskHex) {
-  const size_t hexLen = strlen(pskHex);
-  if (hexLen % 2) {
-    ESP_LOGE(logTag, "invalid psk hex length");
-    return nullptr;
-  }
-
-  const size_t pskLen = hexLen / 2;
-  uint8_t *const psk = new uint8_t[pskLen];
-
-  if (hexStrToBytes(pskHex, psk) != pskLen) {
-    delete[] psk;
-    ESP_LOGE(logTag, "could not parse psk hex");
-    return nullptr;
-  }
-
+                                    const uint8_t *const caCert,
+                                    const char *const username,
+                                    const char *const password) {
   MqttClient *const client = new MqttClient;
-  client->pskHint = new psk_hint_key_t{
-      .key = psk,
-      .key_size = pskLen,
-      .hint = hint,
-  };
 
-  client->cmdTopic = mqttPrepareTopic("cmd", appSettings.devName);
+  client->cmdTopic = mqttPrepareTopic("cmd", username);
+  client->respTopic = mqttPrepareTopic("response", username);
 
-  client->respTopic = mqttPrepareTopic("response", appSettings.devName);
-  if (client->respTopic == nullptr) {
-    ESP_LOGE(logTag, "malloc failed, using fallback mqtt response topic");
-    client->respTopic = mqttFallbackResponseTopic;
-  }
+  client->cert = reinterpret_cast<const char *>(caCert);
 
   const esp_mqtt_client_config_t conf = {
       .event_handle = mqttEventHandler,
       .uri = brokerUri,
+      .username = username,
+      .password = password,
       .keepalive = 30,
       .user_context = client,
-      .psk_hint_key = client->pskHint,
+      .cert_pem = client->cert,
   };
 
   client->handle = esp_mqtt_client_init(&conf);
-  if (client->handle == nullptr) {
-    ESP_LOGE(logTag, "esp_mqtt_client_init failed");
-    goto cleanup;
-  }
+  configASSERT(client->handle);
 
-  if (esp_mqtt_client_start(client->handle) != ESP_OK) {
-    ESP_LOGE(logTag, "esp_mqtt_client_start failed");
-    goto cleanup;
-  }
+  ESP_ERROR_CHECK(esp_mqtt_client_start(client->handle));
 
   client->event = xEventGroupCreate();
 
   return client;
-
-cleanup:
-  delete[] psk;
-  delete client->pskHint;
-  delete client;
-  return nullptr;
 }
 
 static esp_err_t mqttClientFree(MqttClient *const client) {
@@ -537,9 +564,7 @@ static esp_err_t mqttClientFree(MqttClient *const client) {
 
   vEventGroupDelete(client->event);
 
-  if (client->respTopic != mqttFallbackResponseTopic) {
-    delete[] client->respTopic;
-  }
+  delete[] client->respTopic;
   delete[] client->cmdTopic;
   delete client;
 
@@ -935,33 +960,6 @@ static void startPmTasks(Queue<Measurement> &ms_queue) {
   }
 }
 
-constexpr time_t minValidTimestamp = 1577836800; // 2020-01-01 UTC
-
-static constexpr bool isValidTimestamp(const time_t ts) {
-  return ts >= minValidTimestamp;
-}
-
-static bool mqttSendMeasurement(MqttClient *const mq, const Measurement &ms) {
-  const char *type = ms.getType();
-  if (type == nullptr) {
-    return false;
-  }
-
-  if (!ms.formatMsg(mq->msg, sizeof(mq->msg))) {
-    return false;
-  }
-
-  for (int result = -1; result < 0;) {
-    result = esp_mqtt_client_publish(mq->handle, type, mq->msg, 0, 1, 1);
-    if (result < 0) {
-      ESP_LOGI(logTag, "mqtt publish failed, retrying");
-      vTaskDelay(pdMS_TO_TICKS(10000));
-    }
-  }
-
-  return true;
-}
-
 static void restartPeripheral(const periph_module_t mod) {
   periph_module_disable(mod);
   periph_module_enable(mod);
@@ -988,10 +986,6 @@ static esp_err_t readStringSetting(nvs_handle_t nvs, const char *const name,
     return err;
   }
   char *const buf = new char[len];
-  if (buf == nullptr) {
-    ESP_LOGE(logTag, "malloc failed in read_setting_str");
-    return ESP_ERR_NO_MEM;
-  }
   err = nvs_get_str(nvs, name, buf, &len);
   if (err == ESP_OK) {
     *dst = buf;
@@ -1008,8 +1002,8 @@ static esp_err_t readSettings() {
   appSettings.wifi.ssid = CONFIG_WIFI_SSID;
   appSettings.wifi.pass = CONFIG_WIFI_PASSWORD;
   appSettings.mqtt.broker = CONFIG_MQTT_BROKER_URI;
-  appSettings.mqtt.hint = CONFIG_MQTT_HINT;
-  appSettings.mqtt.psk = CONFIG_MQTT_PSK;
+  appSettings.mqtt.username = CONFIG_MQTT_USERNAME;
+  appSettings.mqtt.password = CONFIG_MQTT_PASSWORD;
 
   nvs_handle_t nvs;
 
@@ -1023,8 +1017,8 @@ static esp_err_t readSettings() {
   readStringSetting(nvs, "wifi/ssid", &appSettings.wifi.ssid);
   readStringSetting(nvs, "wifi/pass", &appSettings.wifi.pass);
   readStringSetting(nvs, "mqtt/broker", &appSettings.mqtt.broker);
-  readStringSetting(nvs, "mqtt/hint", &appSettings.mqtt.hint);
-  readStringSetting(nvs, "mqtt/psk", &appSettings.mqtt.psk);
+  readStringSetting(nvs, "mqtt/username", &appSettings.mqtt.username);
+  readStringSetting(nvs, "mqtt/password", &appSettings.mqtt.password);
 
   nvs_close(nvs);
 
@@ -1055,31 +1049,23 @@ extern "C" [[noreturn]] void app_main() {
 
   waitState(STATE_NET_CONNECTED);
 
-  MqttClient *const client = mqttClientCreate(
-      appSettings.mqtt.broker, appSettings.mqtt.hint, appSettings.mqtt.psk);
-
-  if (!client) {
-    ESP_LOGE(logTag, "could not initialize mqtt client");
-    esp_restart();
-  }
+  MqttClient *client =
+      mqttClientCreate(appSettings.mqtt.broker, caPemStart,
+                       appSettings.mqtt.username, appSettings.mqtt.password);
 
   waitState(STATE_TIME_VALID);
 
-  for (Measurement ms;;) {
+  for (char buf[256];;) {
     client->waitReady();
 
-    queue.takeInto(ms);
+    Measurement ms = queue.take();
+    ms.fixTime();
+    ms.formatMsg(buf, sizeof(buf));
 
-    // fix time if it was assigned before SNTP data became available
-    if (!isValidTimestamp(ms.time)) {
-      ms.time += bootTimestamp;
-    }
-
-    if (!mqttSendMeasurement(client, ms)) {
+    if (!client->send(ms.getType(), buf)) {
       ESP_LOGE(logTag, "measurement send failed");
     }
   }
 
-  mqttClientFree(client);
-  esp_restart();
+  configASSERT(false);
 }

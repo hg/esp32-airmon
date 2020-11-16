@@ -44,14 +44,12 @@ config MQTT_BROKER_URI
 	help
 		URI of MQTT broker to send measurement data to
 
-config MQTT_HINT
-	string "MQTT hint"
-	default "airmon"
+config MQTT_USERNAME
+	string "MQTT auth username"
+	default DEV_NAME
 
-config MQTT_PSK
-	string "MQTT pre-shared key in HEX"
-	default "deadbeef"
-	help
-		Pre-shared key for TLS auth as a hex string
+config MQTT_PASSWORD
+	string "MQTT auth password"
+	default "l33th4xx0r"
 endmenu
 

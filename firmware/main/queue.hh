@@ -35,6 +35,12 @@ public:
     return false;
   }
 
+  T take() {
+    T item;
+    xQueueReceive(handle, &item, portMAX_DELAY);
+    return item;
+  }
+
   bool takeInto(T &item, const TickType_t wait = portMAX_DELAY) {
     return xQueueReceive(handle, &item, wait);
   }
