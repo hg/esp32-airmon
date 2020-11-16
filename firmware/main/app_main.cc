@@ -92,7 +92,7 @@ struct PmMeasurementSum {
 
   void addMeasurement(const PmsResponse &resp);
   void reset();
-} __attribute__((packed));
+};
 
 enum class MeasurementType { MS_TEMPERATURE, MS_PARTICULATES };
 
@@ -745,10 +745,14 @@ static void initWifi() {
           .pmf_cfg{.capable = true, .required = false},
       },
   };
-  strncpy((char *)wf_conf.sta.ssid, appSettings.wifi.ssid,
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+  strncpy(reinterpret_cast<char *>(wf_conf.sta.ssid), appSettings.wifi.ssid,
           sizeof(wf_conf.sta.ssid));
-  strncpy((char *)wf_conf.sta.password, appSettings.wifi.pass,
+  strncpy(reinterpret_cast<char *>(wf_conf.sta.password), appSettings.wifi.pass,
           sizeof(wf_conf.sta.password));
+#pragma GCC diagnostic pop
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wf_conf));

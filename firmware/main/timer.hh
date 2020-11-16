@@ -1,18 +1,25 @@
 #pragma once
 
 #include "freertos/FreeRTOS.h"
-#include <chrono>
+#include <numeric>
 
 class Timer {
 public:
   // creates and starts the timer
-  Timer() { ticks = xTaskGetTickCount(); }
+  Timer() { start = xTaskGetTickCount(); }
 
   // returns passed time in seconds
   TickType_t seconds() {
-    return (xTaskGetTickCount() - ticks) / configTICK_RATE_HZ;
+    const TickType_t now = xTaskGetTickCount();
+
+    const TickType_t passed =
+        now >= start
+            ? now - start
+            : std::numeric_limits<decltype(start)>::max() - start + now;
+
+    return passed / configTICK_RATE_HZ;
   }
 
 private:
-  TickType_t ticks;
+  TickType_t start;
 };
