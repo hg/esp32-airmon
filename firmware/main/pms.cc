@@ -51,8 +51,7 @@ void Response::swapBytes() {
 
   Response res;
   ResponseSum sum;
-  Measurement ms{.type = MeasurementType::MS_PARTICULATES,
-                 .sensor = station.name};
+  Measurement ms{.type = MeasurementType::Particulates, .sensor = station.name};
 
   TickType_t lastWake = xTaskGetTickCount();
 
@@ -79,8 +78,15 @@ void Response::swapBytes() {
     }
 
     Timer execTime;
+    bool periodOverflow = false;
 
     for (int successful = 0; successful < CONFIG_PARTICULATE_MEASUREMENTS;) {
+      if (execTime.seconds() >= CONFIG_PARTICULATE_PERIOD_SECONDS) {
+        ESP_LOGE(logTag, "PM measurement took too much time");
+        periodOverflow = true;
+        break;
+      }
+
       const int received = station.readResponse(res, secToTicks(5));
 
       if (received != sizeof(res)) {
@@ -133,7 +139,6 @@ void Response::swapBytes() {
 
     if (!sendEach) {
       ms.time = getTimestamp();
-      ms.set(sum);
     }
 
     sent = station.writeCommand(cmd::cmdSleep);
@@ -141,12 +146,18 @@ void Response::swapBytes() {
       ESP_LOGE(logTag, "could not send sleep command");
     }
 
-    if (!sendEach) {
-      ESP_LOGI(logTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1Mcg,
-               ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
+    if (periodOverflow) {
+      // measurement period overflow, skip next iteration
+      lastWake = xTaskGetTickCount();
+    } else {
+      if (!sendEach) {
+        ms.set(sum);
+        ESP_LOGI(logTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1Mcg,
+                 ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
 
-      if (!station.queue->putRetrying(ms)) {
-        ESP_LOGE(logTag, "could not queue averaged particulate measurement");
+        if (!station.queue->putRetrying(ms)) {
+          ESP_LOGE(logTag, "could not queue averaged PM measurement");
+        }
       }
     }
 
@@ -182,10 +193,10 @@ void Station::start(Queue<Measurement> &msQueue) {
   ESP_ERROR_CHECK(
       uart_set_pin(port, txPin, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
-  std::string taskName{"pm_"};
-  taskName.append(name);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "pm_%s", name);
 
-  xTaskCreate(collectionTask, taskName.c_str(), KiB(2), this, 4, nullptr);
+  xTaskCreate(collectionTask, buf, KiB(2), this, 4, nullptr);
 }
 
 void ResponseSum::addMeasurement(const Response &resp) {

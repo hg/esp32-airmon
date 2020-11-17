@@ -47,10 +47,10 @@ void Measurement::set(const pms::ResponseSum &sum) {
 
 const char *Measurement::getType() const {
   switch (type) {
-  case MeasurementType::MS_TEMPERATURE:
+  case MeasurementType::Temperature:
     return "meas/temp";
 
-  case MeasurementType::MS_PARTICULATES:
+  case MeasurementType::Particulates:
     return "meas/part";
 
   default:
@@ -61,13 +61,13 @@ const char *Measurement::getType() const {
 
 bool Measurement::formatMsg(char *const msg, const size_t len) const {
   switch (type) {
-  case MeasurementType::MS_TEMPERATURE: {
+  case MeasurementType::Temperature: {
     constexpr auto tpl = R"({"dev":"%s","time":%ld,"sens":"%s","temp":%f})";
     snprintf(msg, len, tpl, appSettings.devName, time, sensor, temp);
     return true;
   }
 
-  case MeasurementType::MS_PARTICULATES: {
+  case MeasurementType::Particulates: {
     constexpr auto tpl =
         R"({"dev":"%s","time":%ld,"sens":"%s","std":{"pm1":%u,"pm2.5":%u,"pm10":%u},"atm":{"pm1":%u,"pm2.5":%u,"pm10":%u},"cnt":{"pm0.3":%u,"pm0.5":%u,"pm1":%u,"pm2.5":%u,"pm5":%u,"pm10":%u}})";
     snprintf(msg, len, tpl, appSettings.devName, time, sensor, pm.std.pm1Mcg,

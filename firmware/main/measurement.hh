@@ -4,7 +4,7 @@
 #include "utils.hh"
 #include <ctime>
 
-enum class MeasurementType { MS_TEMPERATURE, MS_PARTICULATES };
+enum class MeasurementType { Temperature, Particulates };
 
 struct Measurement {
   MeasurementType type;

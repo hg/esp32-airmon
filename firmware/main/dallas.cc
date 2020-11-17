@@ -79,7 +79,7 @@ DS18B20_Info *TempSensor::searchTempSensor(const OneWireBus *const owb) {
 void TempSensor::runTempMeasurements(const DS18B20_Info *device,
                                      const TempSensor *const config) {
   int errCount = 0;
-  Measurement ms{.type = MeasurementType::MS_TEMPERATURE,
+  Measurement ms{.type = MeasurementType::Temperature,
                  .sensor = config->name};
   TickType_t lastWakeTime = xTaskGetTickCount();
 
