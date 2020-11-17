@@ -1,0 +1,69 @@
+#include "settings.hh"
+#include "common.hh"
+
+AppSettings appSettings;
+
+esp_err_t AppSettings::readString(nvs::NVSHandle &nvs, const char *const name,
+                                  const char *&dst) {
+  size_t len;
+  esp_err_t err = nvs.get_item_size(nvs::ItemType::SZ, name, len);
+
+  if (err != ESP_OK) {
+    LOG_ERR(err, "could not get setting size");
+    return err;
+  }
+
+  char *const value = new char[len];
+  err = nvs.get_string(name, value, len);
+
+  if (err == ESP_OK) {
+    dst = value;
+    ESP_LOGI(logTag, "read setting %s: [%s]", name, value);
+  } else {
+    delete[] value;
+    LOG_ERR(err, "could not read setting %s", name);
+  }
+
+  return err;
+}
+
+esp_err_t AppSettings::read() {
+  esp_err_t err;
+  std::unique_ptr<nvs::NVSHandle> nvs =
+      nvs::open_nvs_handle("storage", NVS_READONLY, &err);
+
+  if (err != ESP_OK) {
+    LOG_ERR(err, "could not open NVS for reading");
+    return err;
+  }
+
+  readString(*nvs, "dev/name", devName);
+  readString(*nvs, "wifi/ssid", wifi.ssid);
+  readString(*nvs, "wifi/pass", wifi.pass);
+  readString(*nvs, "mqtt/broker", mqtt.broker);
+  readString(*nvs, "mqtt/username", mqtt.username);
+  readString(*nvs, "mqtt/password", mqtt.password);
+
+  return ESP_OK;
+}
+
+esp_err_t AppSettings::write(const char *const name, const char *const value) {
+  esp_err_t err;
+  const std::unique_ptr<nvs::NVSHandle> nvs =
+      nvs::open_nvs_handle("storage", NVS_READWRITE, &err);
+
+  if (err != ESP_OK) {
+    LOG_ERR(err, "could not open NVS");
+    return err;
+  }
+  err = nvs->set_string(name, value);
+  if (err != ESP_OK) {
+    LOG_ERR(err, "could not write to NVS");
+    return err;
+  }
+  err = nvs->commit();
+  if (err != ESP_OK) {
+    LOG_ERR(err, "NVS commit failed");
+  }
+  return err;
+}

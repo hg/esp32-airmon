@@ -18,6 +18,8 @@ public:
 
   Queue(const Queue &) = delete;
 
+  Queue &operator=(const Queue &) = delete;
+
   bool put(const T &item, TickType_t wait = portMAX_DELAY) {
     return xQueueSendToBack(handle, &item, wait) != errQUEUE_FULL;
   }

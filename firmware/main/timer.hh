@@ -1,7 +1,7 @@
 #pragma once
 
 #include "freertos/FreeRTOS.h"
-#include <numeric>
+#include <limits>
 
 class Timer {
 public:

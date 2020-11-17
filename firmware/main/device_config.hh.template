@@ -1,0 +1,22 @@
+#pragma once
+
+#include "dallas.hh"
+#include "pms.hh"
+#include <driver/gpio.h>
+#include <driver/rmt.h>
+
+static ds::TempSensor tempSensors[] = {
+    {.name = "room",
+     .pin = GPIO_NUM_5,
+     .rxChan = RMT_CHANNEL_0,
+     .txChan = RMT_CHANNEL_1,
+     .queue = nullptr},
+};
+
+static pms::Station pmsStations[] = {
+    {.name = "room",
+     .port = UART_NUM_1,
+     .rxPin = GPIO_NUM_25,
+     .txPin = GPIO_NUM_27,
+     .queue = nullptr},
+};
