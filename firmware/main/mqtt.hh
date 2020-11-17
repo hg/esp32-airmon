@@ -1,5 +1,6 @@
 #pragma once
 
+#include "queue.hh"
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <mqtt_client.h>
@@ -10,6 +11,15 @@ namespace mqtt {
 
 enum class MqttState : EventBits_t {
   Ready = BIT0,
+};
+
+struct Message {
+  int id;
+  std::string topic;
+  std::string respTopic;
+  std::string data;
+
+  bool isBroadcast() const { return topic == "cmd/*"; }
 };
 
 class Client {
@@ -25,30 +35,20 @@ public:
 
   void waitReady() const;
 
-  bool send(const char *topic, const char *data);
+  bool send(const std::string &topic, const char *data);
+
+  Message receive();
+
+  bool subscribe(const char *topic, int qos);
 
 private:
   void clearState(MqttState bits);
 
   void setState(MqttState bits);
 
-  void subscribeToCommands();
-
-  bool handleMessage(esp_mqtt_event_handle_t evt);
-
-  bool handleOta(const char *respTopic, const std::vector<std::string> &args);
-
-  bool handleWriteSetting(const char *respTopic,
-                          const std::vector<std::string> &args);
-
-  [[noreturn]] bool handleRestart(const char *respTopic);
-
-  bool handleUnknown(const char *respTopic);
-
-  bool handlePing(esp_mqtt_event_handle_t evt, const char *respTopic);
-
   static esp_err_t handleEvent(esp_mqtt_event_handle_t evt);
 
+  Queue<Message*> msgQueue{10};
   esp_mqtt_client_handle_t handle;
   EventGroupHandle_t event;
   const char *cert;

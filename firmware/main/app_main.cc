@@ -1,3 +1,5 @@
+#include "ca.hh"
+#include "commands.hh"
 #include "common.hh"
 #include "dallas.hh"
 #include "device_config.hh"
@@ -15,9 +17,6 @@
 #include <nvs_flash.h>
 
 State *appState = nullptr;
-
-// CA certificate for MQTT TLS and OTA updates
-extern const char caPemStart[] asm("_binary_ca_pem_start");
 
 static void initLog() {
 #ifdef DEBUG
@@ -74,6 +73,8 @@ extern "C" [[noreturn]] void app_main() {
 
   mqtt::Client client{appSettings.mqtt.broker, caPemStart,
                       appSettings.mqtt.username, appSettings.mqtt.password};
+
+  initCommandHandler(client);
 
   appState->wait(AppState::STATE_TIME_VALID);
 
