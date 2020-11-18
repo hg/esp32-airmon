@@ -19,6 +19,7 @@ struct AppSettings {
 
   esp_err_t write(const char *name, const char *value);
 
+  std::string format() const;
 private:
   static esp_err_t readString(nvs::NVSHandle &nvs, const char *name,
                               const char *&dst);

@@ -1,5 +1,6 @@
 #include "settings.hh"
 #include "common.hh"
+#include <cstring>
 
 AppSettings appSettings;
 
@@ -66,4 +67,19 @@ esp_err_t AppSettings::write(const char *const name, const char *const value) {
     LOG_ERR(err, "NVS commit failed");
   }
   return err;
+}
+
+std::string AppSettings::format() const {
+  constexpr auto tpl =
+      R"({"dev":"%s","wifi":{"ssid":"%s","pass":"%s"},"mqtt":{"broker":"%s","user":"%s","pass":"%s"}})";
+  // this is pretty slow, but we rarely call this command, and it will prevent
+  // using more heap than necessary
+  const size_t size = strlen(tpl) + strlen(devName) + strlen(wifi.ssid) +
+                      strlen(wifi.pass) + strlen(mqtt.broker) +
+                      strlen(mqtt.username) + strlen(mqtt.password);
+  std::string json;
+  json.reserve(size);
+  snprintf(&json[0], json.capacity(), tpl, devName, wifi.ssid, wifi.pass,
+           mqtt.broker, mqtt.username, mqtt.password);
+  return json;
 }

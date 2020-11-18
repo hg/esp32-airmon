@@ -19,10 +19,16 @@ static bool handlePing(mqtt::Client &client, const mqtt::Message &msg) {
   esp_restart();
 }
 
+static bool handleReadSettings(mqtt::Client &client, const mqtt::Message &msg) {
+  const std::string json = appSettings.format();
+  client.send(msg.respTopic, json.c_str());
+  return true;
+}
+
 static bool handleWriteSetting(mqtt::Client &client, const mqtt::Message &msg,
                                const std::vector<std::string> &args) {
   if (args.size() != 3) {
-    client.send(msg.respTopic, "usage: setting/set name_spaces value_also");
+    client.send(msg.respTopic, "usage: setting/set name_no_spaces value_also");
     return false;
   }
   const esp_err_t err = appSettings.write(args[1].c_str(), args[2].c_str());
@@ -99,6 +105,9 @@ static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
   if (command == "setting/set") {
     return handleWriteSetting(client, msg, tokens);
   }
+  if (command == "setting/get") {
+    return handleReadSettings(client, msg);
+  }
   return handleUnknown(client, msg);
 }
 
@@ -114,6 +123,5 @@ static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
 }
 
 void initCommandHandler(mqtt::Client &client) {
-  xTaskCreate(taskCommandHandler, "mqtt_cmd_handler", KiB(2), &client, 4,
-              nullptr);
+  xTaskCreate(taskCommandHandler, "mqtt_cmd", KiB(4), &client, 4, nullptr);
 }
