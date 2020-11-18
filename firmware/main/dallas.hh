@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include <driver/rmt.h>
 #include <ds18b20.h>
+#include <memory>
 
 namespace ds {
 
@@ -20,10 +21,7 @@ struct TempSensor {
 private:
   [[noreturn]] static void collectionTask(void *arg);
 
-  static DS18B20_Info *searchTempSensor(const OneWireBus *owb);
-
-  static void runTempMeasurements(const DS18B20_Info *device,
-                                  const TempSensor *config);
+  void runMeasurements(const DS18B20_Info &device);
 };
 
 } // namespace ds

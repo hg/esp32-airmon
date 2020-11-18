@@ -9,6 +9,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+using CommandArgs = std::vector<std::string_view>;
+
 static bool handlePing(mqtt::Client &client, const mqtt::Message &msg) {
   return client.send(msg.respTopic, appSettings.devName);
 }
@@ -21,17 +23,17 @@ static bool handlePing(mqtt::Client &client, const mqtt::Message &msg) {
 
 static bool handleReadSettings(mqtt::Client &client, const mqtt::Message &msg) {
   const std::string json = appSettings.format();
-  client.send(msg.respTopic, json.c_str());
+  client.send(msg.respTopic, json);
   return true;
 }
 
 static bool handleWriteSetting(mqtt::Client &client, const mqtt::Message &msg,
-                               const std::vector<std::string> &args) {
+                               const CommandArgs &args) {
   if (args.size() != 3) {
     client.send(msg.respTopic, "usage: setting/set name_no_spaces value_also");
     return false;
   }
-  const esp_err_t err = appSettings.write(args[1].c_str(), args[2].c_str());
+  const esp_err_t err = appSettings.write(args[1], args[2]);
   if (err == ESP_OK) {
     client.send(msg.respTopic, "setting set");
   } else {
@@ -41,14 +43,14 @@ static bool handleWriteSetting(mqtt::Client &client, const mqtt::Message &msg,
 }
 
 static bool handleOta(mqtt::Client &client, const mqtt::Message &msg,
-                      const std::vector<std::string> &args) {
+                      const CommandArgs &args) {
   if (args.size() != 2) {
     client.send(msg.respTopic, "usage: ota https://server/path.bin");
     return false;
   }
 
   const esp_http_client_config_t config{
-      .url = args[1].c_str(),
+      .url = args[1].data(),
       .cert_pem = caPemStart,
   };
 
@@ -72,13 +74,14 @@ static bool handleUnknown(mqtt::Client &client, const mqtt::Message &msg) {
 }
 
 static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
-  std::vector<std::string> tokens;
+  std::vector<std::string_view> tokens;
 
   const auto end = msg.data.cend();
   for (auto begin = msg.data.cbegin(); begin != end;) {
     const auto nextSpace = std::find_if(begin, end, isspace);
     if (nextSpace != begin) {
-      tokens.push_back(std::string{begin, nextSpace});
+      const std::string_view::size_type len = nextSpace - begin;
+      tokens.emplace_back(begin.base(), len);
       if (nextSpace == end) {
         break;
       }
@@ -91,7 +94,7 @@ static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
     return false;
   }
 
-  const std::string &command = tokens.front();
+  const std::string_view &command = tokens.front();
 
   if (command == "ota") {
     return handleOta(client, msg, tokens);

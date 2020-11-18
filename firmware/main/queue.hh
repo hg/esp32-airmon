@@ -6,7 +6,7 @@
 
 template <typename T> class Queue {
 public:
-  Queue(const size_t size) {
+  explicit Queue(const size_t size) {
     handle = xQueueCreate(size, sizeof(T));
     configASSERT(handle);
   }
@@ -27,8 +27,8 @@ public:
   bool putRetrying(const T &item) {
     for (int retry = 0; retry < 5; ++retry) {
       if (retry > 0) {
-        T item;
-        takeInto(item, 0);
+        T drop;
+        takeInto(drop, 0);
       }
       if (put(item, secToTicks(1))) {
         return true;

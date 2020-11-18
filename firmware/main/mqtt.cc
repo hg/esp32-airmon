@@ -6,19 +6,19 @@
 
 namespace mqtt {
 
-esp_err_t Client::handleEvent(const esp_mqtt_event_handle_t evt) {
+esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
   Client &client = *reinterpret_cast<Client *>(evt->user_context);
 
   switch (evt->event_id) {
   case MQTT_EVENT_CONNECTED:
-    client.setState(MqttState::Ready);
+    client.setState(MqttState::READY);
     client.subscribe("cmd/*", 2);
-    client.subscribe(client.cmdTopic.c_str(), 2);
+    client.subscribe(client.cmdTopic, 2);
     ESP_LOGI(logTag, "mqtt connected");
     break;
 
   case MQTT_EVENT_DISCONNECTED:
-    client.clearState(MqttState::Ready);
+    client.clearState(MqttState::READY);
     ESP_LOGI(logTag, "mqtt disconnected");
     break;
 
@@ -81,13 +81,14 @@ Client::~Client() {
 }
 
 void Client::waitReady() const {
-  xEventGroupWaitBits(event, static_cast<EventBits_t>(MqttState::Ready), false,
+  xEventGroupWaitBits(event, static_cast<EventBits_t>(MqttState::READY), false,
                       false, portMAX_DELAY);
 }
 
-bool Client::send(const std::string &topic, const char *const data) {
+bool Client::send(std::string_view topic, std::string_view data) {
   for (int result = -1; result < 0;) {
-    result = esp_mqtt_client_publish(handle, topic.c_str(), data, 0, 1, 1);
+    result = esp_mqtt_client_publish(handle, topic.data(), data.data(),
+                                     data.length(), 1, 1);
     if (result < 0) {
       ESP_LOGI(logTag, "mqtt publish failed, retrying");
       vTaskDelay(secToTicks(5));
@@ -105,8 +106,8 @@ void Client::clearState(const MqttState bits) {
   xEventGroupClearBits(event, static_cast<EventBits_t>(bits));
 }
 
-bool Client::subscribe(const char *topic, int qos) {
-  return esp_mqtt_client_subscribe(handle, topic, qos) != ESP_OK;
+bool Client::subscribe(std::string_view topic, int qos) {
+  return esp_mqtt_client_subscribe(handle, topic.data(), qos) != ESP_OK;
 }
 
 Message Client::receive() { return *msgQueue.take(); }

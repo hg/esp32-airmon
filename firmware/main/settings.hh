@@ -17,11 +17,12 @@ struct AppSettings {
 
   esp_err_t read();
 
-  esp_err_t write(const char *name, const char *value);
+  esp_err_t write(std::string_view name, std::string_view value);
 
-  std::string format() const;
+  [[nodiscard]] std::string format() const;
+
 private:
-  static esp_err_t readString(nvs::NVSHandle &nvs, const char *name,
+  static esp_err_t readString(nvs::NVSHandle &nvs, std::string_view name,
                               const char *&dst);
 };
 

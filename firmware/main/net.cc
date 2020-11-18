@@ -7,7 +7,8 @@
 #include <esp_tls.h>
 #include <esp_wifi.h>
 
-static void handleIpEvent(void *const arg, const esp_event_base_t event_base,
+static void handleIpEvent([[maybe_unused]] void *const arg,
+                          const esp_event_base_t event_base,
                           const int32_t event_id, void *const event_data) {
   configASSERT(event_base == IP_EVENT);
 
@@ -34,8 +35,10 @@ static void handleIpEvent(void *const arg, const esp_event_base_t event_base,
   }
 }
 
-static void handleWifiEvent(void *const arg, const esp_event_base_t event_base,
-                            const int32_t event_id, void *const event_data) {
+static void handleWifiEvent([[maybe_unused]] void *const arg,
+                            const esp_event_base_t event_base,
+                            const int32_t event_id,
+                            [[maybe_unused]] void *const event_data) {
   configASSERT(event_base == WIFI_EVENT);
 
   switch (event_id) {
@@ -78,14 +81,14 @@ void initWifi() {
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
       IP_EVENT, ESP_EVENT_ANY_ID, handleIpEvent, nullptr, nullptr));
 
-  wifi_scan_threshold_t thres{
+  wifi_scan_threshold_t threshold{
       .authmode = WIFI_AUTH_WPA2_PSK,
   };
 
   // connect to station
   wifi_config_t wf_conf{
       .sta{
-          .threshold = thres,
+          .threshold = threshold,
           .pmf_cfg{.capable = true, .required = false},
       },
   };

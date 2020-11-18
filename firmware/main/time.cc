@@ -7,19 +7,19 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-time_t bootTimestamp = 0;
+volatile time_t bootTimestamp = 0;
 
 time_t getTimestamp() {
-  const int64_t us_per_sec = 1000 * 1000;
+  constexpr int64_t usPerSec = 1000 * 1000;
 
   if (bootTimestamp > 0) {
     return time(nullptr);
   } else {
-    return esp_timer_get_time() / us_per_sec;
+    return esp_timer_get_time() / usPerSec;
   }
 }
 
-static void onTimeUpdated(timeval *const tm) {
+static void onTimeUpdated([[maybe_unused]] timeval *const tm) {
   if (bootTimestamp == 0) {
     bootTimestamp = time(nullptr);
     appState->set(AppState::STATE_TIME_VALID);
@@ -27,7 +27,7 @@ static void onTimeUpdated(timeval *const tm) {
   ESP_LOGI(logTag, "sntp time update finished");
 }
 
-static void taskSntpUpdate(void *const arg) {
+static void taskSntpUpdate([[maybe_unused]] void *const arg) {
   appState->wait(AppState::STATE_NET_CONNECTED);
 
   sntp_setoperatingmode(SNTP_OPMODE_POLL);

@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
-#include <string>
 
 // delay between two particulate matter measurements
 static const int delayPm = secToTicks(CONFIG_PARTICULATE_PERIOD_SECONDS);
@@ -51,7 +50,7 @@ void Response::swapBytes() {
 
   Response res;
   ResponseSum sum;
-  Measurement ms{.type = MeasurementType::Particulates, .sensor = station.name};
+  Measurement ms{.type = MeasurementType::PARTICULATES, .sensor = station.name};
 
   TickType_t lastWake = xTaskGetTickCount();
 
@@ -165,15 +164,15 @@ void Response::swapBytes() {
   }
 }
 
-int Station::readResponse(Response &resp, const TickType_t wait) const {
+int Station::readResponse(Response &resp, const TickType_t wait) {
   return uart_read_bytes(port, &resp, sizeof(resp), wait);
 }
 
-int Station::writeCommand(const cmd::Command &cmd) const {
+int Station::writeCommand(const cmd::Command &cmd) {
   return uart_write_bytes(port, &cmd, sizeof(cmd));
 }
 
-esp_err_t Station::flushInput() const { return uart_flush_input(port); }
+esp_err_t Station::flushInput() { return uart_flush_input(port); }
 
 void Station::start(Queue<Measurement> &msQueue) {
   const uart_config_t conf{

@@ -4,7 +4,7 @@
 #include "utils.hh"
 #include <ctime>
 
-enum class MeasurementType { Temperature, Particulates };
+enum class MeasurementType { TEMPERATURE, PARTICULATES };
 
 struct Measurement {
   MeasurementType type;
@@ -40,7 +40,7 @@ struct Measurement {
 
   void set(const pms::ResponseSum &sum);
 
-  const char *getType() const;
+  [[nodiscard]] const char *getType() const;
 
-  bool formatMsg(char *msg, size_t len) const;
+  bool formatMsg(char *buf, size_t size) const;
 };

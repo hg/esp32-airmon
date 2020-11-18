@@ -4,10 +4,10 @@
 
 AppSettings appSettings;
 
-esp_err_t AppSettings::readString(nvs::NVSHandle &nvs, const char *const name,
+esp_err_t AppSettings::readString(nvs::NVSHandle &nvs, std::string_view name,
                                   const char *&dst) {
   size_t len;
-  esp_err_t err = nvs.get_item_size(nvs::ItemType::SZ, name, len);
+  esp_err_t err = nvs.get_item_size(nvs::ItemType::SZ, name.data(), len);
 
   if (err != ESP_OK) {
     LOG_ERR(err, "could not get setting size");
@@ -15,14 +15,14 @@ esp_err_t AppSettings::readString(nvs::NVSHandle &nvs, const char *const name,
   }
 
   char *const value = new char[len];
-  err = nvs.get_string(name, value, len);
+  err = nvs.get_string(name.data(), value, len);
 
   if (err == ESP_OK) {
     dst = value;
-    ESP_LOGI(logTag, "read setting %s: [%s]", name, value);
+    ESP_LOGI(logTag, "read setting %s: [%s]", name.data(), value);
   } else {
     delete[] value;
-    LOG_ERR(err, "could not read setting %s", name);
+    LOG_ERR(err, "could not read setting %s", name.data());
   }
 
   return err;
@@ -48,7 +48,7 @@ esp_err_t AppSettings::read() {
   return ESP_OK;
 }
 
-esp_err_t AppSettings::write(const char *const name, const char *const value) {
+esp_err_t AppSettings::write(std::string_view name, std::string_view value) {
   esp_err_t err;
   const std::unique_ptr<nvs::NVSHandle> nvs =
       nvs::open_nvs_handle("storage", NVS_READWRITE, &err);
@@ -57,7 +57,7 @@ esp_err_t AppSettings::write(const char *const name, const char *const value) {
     LOG_ERR(err, "could not open NVS");
     return err;
   }
-  err = nvs->set_string(name, value);
+  err = nvs->set_string(name.data(), value.data());
   if (err != ESP_OK) {
     LOG_ERR(err, "could not write to NVS");
     return err;

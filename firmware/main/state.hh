@@ -22,7 +22,7 @@ public:
 
   void wait(AppState bits);
 
-  bool check(AppState bits);
+  [[nodiscard]] bool check(AppState bits);
 
   void set(AppState bits);
 

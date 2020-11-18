@@ -38,7 +38,7 @@ struct Response {
   uint16_t reserved;
   uint16_t checksum;
 
-  uint16_t calcChecksum() const;
+  [[nodiscard]] uint16_t calcChecksum() const;
 
   void swapBytes();
 } __attribute__((packed));
@@ -50,18 +50,17 @@ struct Station {
   const gpio_num_t txPin;
   Queue<Measurement> *queue;
 
-  int readResponse(Response &resp, TickType_t wait) const;
+  int readResponse(Response &resp, TickType_t wait);
 
-  int writeCommand(const cmd::Command &cmd) const;
+  int writeCommand(const cmd::Command &cmd);
 
-  esp_err_t flushInput() const;
+  esp_err_t flushInput();
 
   void start(Queue<Measurement> &msQueue);
 
 private:
-  static constexpr size_t pmsFrameLen = sizeof(Response) -
-                                        sizeof(Response::magic) -
-                                        sizeof(Response::frameLen);
+  static constexpr size_t pmsFrameLen =
+      sizeof(Response) - sizeof(Response::magic) - sizeof(Response::frameLen);
 
   [[noreturn]] static void collectionTask(void *arg);
 };

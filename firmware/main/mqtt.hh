@@ -5,12 +5,13 @@
 #include <freertos/event_groups.h>
 #include <mqtt_client.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mqtt {
 
 enum class MqttState : EventBits_t {
-  Ready = BIT0,
+  READY = BIT0,
 };
 
 struct Message {
@@ -19,7 +20,7 @@ struct Message {
   std::string respTopic;
   std::string data;
 
-  bool isBroadcast() const { return topic == "cmd/*"; }
+  [[nodiscard]] bool isBroadcast() const { return topic == "cmd/*"; }
 };
 
 class Client {
@@ -35,11 +36,11 @@ public:
 
   void waitReady() const;
 
-  bool send(const std::string &topic, const char *data);
+  bool send(std::string_view topic, std::string_view data);
 
-  Message receive();
+  [[nodiscard]] Message receive();
 
-  bool subscribe(const char *topic, int qos);
+  bool subscribe(std::string_view topic, int qos);
 
 private:
   void clearState(MqttState bits);
@@ -48,7 +49,7 @@ private:
 
   static esp_err_t handleEvent(esp_mqtt_event_handle_t evt);
 
-  Queue<Message*> msgQueue{10};
+  Queue<Message *> msgQueue{10};
   esp_mqtt_client_handle_t handle;
   EventGroupHandle_t event;
   const char *cert;

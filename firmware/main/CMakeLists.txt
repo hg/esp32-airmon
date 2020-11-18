@@ -4,5 +4,5 @@ idf_component_register(
         EMBED_TXTFILES "ca.pem"
 )
 
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers -std=gnu++17)
 
