@@ -28,11 +28,14 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
 
   case MQTT_EVENT_DATA: {
     ESP_LOGI(logTag, "mqtt message received (id %d)", evt->msg_id);
-    auto *const msg = new Message{
+    std::string topic{evt->topic, static_cast<unsigned>(evt->topic_len)};
+    Message *const msg = new Message{
         .id = evt->msg_id,
-        .topic = std::string{evt->topic, static_cast<unsigned>(evt->topic_len)},
-        .data = std::string{evt->data, static_cast<unsigned>(evt->data_len)}};
-    msg->respTopic = msg->isBroadcast() ? "response/*" : client.respTopic;
+        .topic = std::move(topic),
+        .respTopic = topic == "cmd/*" ? "response/*" : client.respTopic,
+        .data = std::string{evt->data, static_cast<unsigned>(evt->data_len)},
+    };
+
     client.msgQueue.put(msg);
     break;
   }
@@ -52,21 +55,20 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
   return ESP_OK;
 }
 
-Client::Client(const char *const brokerUri, const char *const caCert,
-               const char *const username, const char *const password) {
-  cmdTopic = std::string{"cmd/"} + username;
-  respTopic = std::string{"response/"} + username;
-  cert = caCert;
-  event = xEventGroupCreate();
+Client::Client(std::string_view brokerUri, std::string_view caCert,
+               std::string_view username, std::string_view password)
+    : cmdTopic{std::string{"cmd/"}.append(username)},
+      respTopic{std::string{"response/"}.append(username)}, cert{caCert},
+      event{xEventGroupCreate()} {
 
   const esp_mqtt_client_config_t conf{
       .event_handle = handleEvent,
-      .uri = brokerUri,
-      .username = username,
-      .password = password,
+      .uri = brokerUri.data(),
+      .username = username.data(),
+      .password = password.data(),
       .keepalive = 30,
       .user_context = this,
-      .cert_pem = caCert,
+      .cert_pem = caCert.data(),
   };
   handle = esp_mqtt_client_init(&conf);
   configASSERT(handle);

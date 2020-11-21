@@ -4,26 +4,31 @@
 #include <nvs_handle.hpp>
 
 struct AppSettings {
-  const char *devName = CONFIG_DEV_NAME;
+  std::string devName{CONFIG_DEV_NAME};
+
   struct {
-    const char *ssid = CONFIG_WIFI_SSID;
-    const char *pass = CONFIG_WIFI_PASSWORD;
+    std::string ssid{CONFIG_WIFI_SSID};
+    std::string pass{CONFIG_WIFI_PASSWORD};
   } wifi;
+
   struct {
-    const char *broker = CONFIG_MQTT_BROKER_URI;
-    const char *username = CONFIG_MQTT_USERNAME;
-    const char *password = CONFIG_MQTT_PASSWORD;
+    std::string broker{CONFIG_MQTT_BROKER_URI};
+    std::string username{CONFIG_MQTT_USERNAME};
+    std::string password{CONFIG_MQTT_PASSWORD};
   } mqtt;
+
+  struct {
+    int pm{CONFIG_PARTICULATE_PERIOD_SECONDS};
+    int temp{CONFIG_TEMPERATURE_PERIOD_SECONDS};
+  } period;
 
   esp_err_t read();
 
-  esp_err_t write(std::string_view name, std::string_view value);
+  esp_err_t write();
+
+  bool set(std::string_view out, std::string_view value);
 
   [[nodiscard]] std::string format() const;
-
-private:
-  static esp_err_t readString(nvs::NVSHandle &nvs, std::string_view name,
-                              const char *&dst);
 };
 
 extern AppSettings appSettings;

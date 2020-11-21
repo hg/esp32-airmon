@@ -10,7 +10,7 @@
 namespace ds {
 
 struct TempSensor {
-  const char *name;
+  const char *const name;
   const gpio_num_t pin;
   const rmt_channel_t rxChan;
   const rmt_channel_t txChan;

@@ -1,12 +1,13 @@
 #pragma once
 
 #include "freertos/FreeRTOS.h"
+#include <chrono>
 #include <limits>
 
 class Timer {
 public:
   // creates and starts the timer
-  Timer() { start = xTaskGetTickCount(); }
+  Timer() : start{xTaskGetTickCount()} {}
 
   // returns passed time in seconds
   TickType_t seconds() {
@@ -21,5 +22,5 @@ public:
   }
 
 private:
-  TickType_t start;
+  const TickType_t start;
 };

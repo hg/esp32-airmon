@@ -1,6 +1,7 @@
 #include "pms.hh"
 #include "common.hh"
 #include "measurement.hh"
+#include "settings.hh"
 #include "state.hh"
 #include "time.hh"
 #include "timer.hh"
@@ -8,9 +9,6 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
-
-// delay between two particulate matter measurements
-static const int delayPm = secToTicks(CONFIG_PARTICULATE_PERIOD_SECONDS);
 
 namespace pms {
 
@@ -27,11 +25,11 @@ static constexpr Command initCmd(uint8_t cmd, uint8_t hi, uint8_t lo) {
   };
 }
 
-static const Command cmdRead = initCmd(0xe2, 0x00, 0x00);
-static const Command cmdModePassive = initCmd(0xe1, 0x00, 0x00);
-static const Command cmdModeActive = initCmd(0xe1, 0x00, 0x01);
-static const Command cmdSleep = initCmd(0xe4, 0x00, 0x00);
-static const Command cmdWakeup = initCmd(0xe4, 0x00, 0x01);
+static constexpr Command cmdRead = initCmd(0xe2, 0x00, 0x00);
+static constexpr Command cmdModePassive = initCmd(0xe1, 0x00, 0x00);
+static constexpr Command cmdModeActive = initCmd(0xe1, 0x00, 0x01);
+static constexpr Command cmdSleep = initCmd(0xe4, 0x00, 0x00);
+static constexpr Command cmdWakeup = initCmd(0xe4, 0x00, 0x01);
 
 } // namespace cmd
 
@@ -41,15 +39,14 @@ uint16_t Response::calcChecksum() const {
 }
 
 void Response::swapBytes() {
-  std::transform(&frameLen, (&checksum) + 1, &frameLen,
-                 [](uint16_t num) -> uint16_t { return ntohs(num); });
+  std::transform(&frameLen, (&checksum) + 1, &frameLen, &lwip_htons);
 }
 
 [[noreturn]] void Station::collectionTask(void *const arg) {
   Station &station{*reinterpret_cast<Station *>(arg)};
 
-  Response res;
-  ResponseSum sum;
+  Response res{};
+  ResponseSum sum{};
   Measurement ms{.type = MeasurementType::PARTICULATES, .sensor = station.name};
 
   TickType_t lastWake = xTaskGetTickCount();
@@ -58,6 +55,7 @@ void Response::swapBytes() {
     int sent = station.writeCommand(cmd::cmdWakeup);
     if (sent != sizeof(cmd::cmdWakeup)) {
       ESP_LOGE(logTag, "could not send wakeup command");
+      station.flushOutput(portMAX_DELAY);
       vTaskDelay(secToTicks(1));
       continue;
     }
@@ -160,7 +158,7 @@ void Response::swapBytes() {
       }
     }
 
-    vTaskDelayUntil(&lastWake, delayPm);
+    vTaskDelayUntil(&lastWake, secToTicks(appSettings.period.pm));
   }
 }
 
@@ -174,8 +172,14 @@ int Station::writeCommand(const cmd::Command &cmd) {
 
 esp_err_t Station::flushInput() { return uart_flush_input(port); }
 
+esp_err_t Station::flushOutput(const TickType_t wait) {
+  return uart_wait_tx_done(port, wait);
+}
+
 void Station::start(Queue<Measurement> &msQueue) {
-  const uart_config_t conf{
+  queue = &msQueue;
+
+  constexpr uart_config_t conf{
       .baud_rate = 9600,
       .data_bits = UART_DATA_8_BITS,
       .parity = UART_PARITY_DISABLE,
@@ -184,8 +188,8 @@ void Station::start(Queue<Measurement> &msQueue) {
       .source_clk = UART_SCLK_APB,
   };
 
-  const size_t rxBuf = sizeof(Response) * 10;
-  queue = &msQueue;
+  constexpr size_t rxBuf = sizeof(Response) * 10;
+  static_assert(rxBuf >= UART_FIFO_LEN);
 
   ESP_ERROR_CHECK(uart_driver_install(port, rxBuf, 0, 0, nullptr, 0));
   ESP_ERROR_CHECK(uart_param_config(port, &conf));

@@ -81,24 +81,26 @@ void initWifi() {
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
       IP_EVENT, ESP_EVENT_ANY_ID, handleIpEvent, nullptr, nullptr));
 
-  wifi_scan_threshold_t threshold{
-      .authmode = WIFI_AUTH_WPA2_PSK,
-  };
-
   // connect to station
   wifi_config_t wf_conf{
       .sta{
-          .threshold = threshold,
-          .pmf_cfg{.capable = true, .required = false},
+          .threshold =
+              wifi_scan_threshold_t{
+                  .authmode = WIFI_AUTH_WPA2_PSK,
+              },
+          .pmf_cfg{
+              .capable = true,
+              .required = false,
+          },
       },
   };
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
-  strncpy(reinterpret_cast<char *>(wf_conf.sta.ssid), appSettings.wifi.ssid,
-          sizeof(wf_conf.sta.ssid));
-  strncpy(reinterpret_cast<char *>(wf_conf.sta.password), appSettings.wifi.pass,
-          sizeof(wf_conf.sta.password));
+  strncpy(reinterpret_cast<char *>(wf_conf.sta.ssid),
+          appSettings.wifi.ssid.c_str(), sizeof(wf_conf.sta.ssid));
+  strncpy(reinterpret_cast<char *>(wf_conf.sta.password),
+          appSettings.wifi.pass.c_str(), sizeof(wf_conf.sta.password));
 #pragma GCC diagnostic pop
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));

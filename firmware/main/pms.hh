@@ -56,6 +56,8 @@ struct Station {
 
   esp_err_t flushInput();
 
+  esp_err_t flushOutput(const TickType_t wait);
+
   void start(Queue<Measurement> &msQueue);
 
 private:

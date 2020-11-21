@@ -15,18 +15,16 @@ enum class MqttState : EventBits_t {
 };
 
 struct Message {
-  int id;
-  std::string topic;
-  std::string respTopic;
-  std::string data;
-
-  [[nodiscard]] bool isBroadcast() const { return topic == "cmd/*"; }
+  const int id;
+  const std::string topic;
+  const std::string respTopic;
+  const std::string data;
 };
 
 class Client {
 public:
-  Client(const char *brokerUri, const char *caCert, const char *username,
-         const char *password);
+  Client(std::string_view brokerUri, std::string_view caCert,
+         std::string_view username, std::string_view password);
 
   Client(const Client &) = delete;
 
@@ -51,10 +49,10 @@ private:
 
   Queue<Message *> msgQueue{10};
   esp_mqtt_client_handle_t handle;
-  EventGroupHandle_t event;
-  const char *cert;
-  std::string cmdTopic;
-  std::string respTopic;
+  const std::string cmdTopic;
+  const std::string respTopic;
+  const std::string_view cert;
+  const EventGroupHandle_t event;
 };
 
 } // namespace mqtt

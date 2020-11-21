@@ -27,13 +27,21 @@ static bool handleReadSettings(mqtt::Client &client, const mqtt::Message &msg) {
   return true;
 }
 
-static bool handleWriteSetting(mqtt::Client &client, const mqtt::Message &msg,
-                               const CommandArgs &args) {
+static bool handleWriteSettings(mqtt::Client &client,
+                                const mqtt::Message &msg) {
+  const esp_err_t err = appSettings.write();
+  const char *const resp =
+      err == ESP_OK ? "settings saved" : "could not write settings";
+  return client.send(msg.respTopic, resp);
+}
+
+static bool handleSetSetting(mqtt::Client &client, const mqtt::Message &msg,
+                             const CommandArgs &args) {
   if (args.size() != 3) {
     client.send(msg.respTopic, "usage: setting/set name_no_spaces value_also");
     return false;
   }
-  const esp_err_t err = appSettings.write(args[1], args[2]);
+  const esp_err_t err = appSettings.set(args[1], args[2]);
   if (err == ESP_OK) {
     client.send(msg.respTopic, "setting set");
   } else {
@@ -106,10 +114,13 @@ static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
     return handleRestart(client, msg);
   }
   if (command == "setting/set") {
-    return handleWriteSetting(client, msg, tokens);
+    return handleSetSetting(client, msg, tokens);
   }
   if (command == "setting/get") {
     return handleReadSettings(client, msg);
+  }
+  if (command == "setting/write") {
+    return handleWriteSettings(client, msg);
   }
   return handleUnknown(client, msg);
 }

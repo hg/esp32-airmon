@@ -12,7 +12,7 @@ enum class AppState : EventBits_t {
 
 class State {
 public:
-  State() { handle = xEventGroupCreate(); }
+  State() : handle{xEventGroupCreate()} {}
 
   State(const State &) = delete;
 
@@ -29,7 +29,7 @@ public:
   void reset(AppState bits);
 
 private:
-  EventGroupHandle_t handle;
+  const EventGroupHandle_t handle;
 };
 
 extern State *appState;
