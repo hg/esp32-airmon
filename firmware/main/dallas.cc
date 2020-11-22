@@ -1,9 +1,7 @@
 #include "dallas.hh"
 #include "common.hh"
+#include "settings.hh"
 #include "time.hh"
-
-// delay between two temperature measurements
-static const int delayTemp = secToTicks(CONFIG_TEMPERATURE_PERIOD_SECONDS);
 
 namespace ds {
 
@@ -44,25 +42,24 @@ static std::unique_ptr<DS18B20_Info> findSensor(const OneWireBus &owb) {
 }
 
 void TempSensor::runMeasurements(const DS18B20_Info &device) {
-  int errCount = 0;
   Measurement ms{.type = MeasurementType::TEMPERATURE, .sensor = name};
   TickType_t lastWakeTime = xTaskGetTickCount();
 
-  while (errCount < 4) {
+  for (int errCount = 0; errCount < 4;) {
     const DS18B20_ERROR err = ds18b20_convert_and_read_temp(&device, &ms.temp);
 
-    if (err != DS18B20_OK) {
-      ++errCount;
-      ESP_LOGW(logTag, "measurement failed in %s, err %d", name, err);
-    } else {
+    if (err == DS18B20_OK) {
       errCount = 0;
       ms.time = getTimestamp();
       if (!queue->putRetrying(ms)) {
         ESP_LOGE(logTag, "could not put temp measurement into queue");
       }
+    } else {
+      ++errCount;
+      ESP_LOGW(logTag, "measurement failed in %s, err 0x%x", name, err);
     }
 
-    vTaskDelayUntil(&lastWakeTime, delayTemp);
+    vTaskDelayUntil(&lastWakeTime, appSettings.period.temp);
   }
 }
 
@@ -71,9 +68,10 @@ void TempSensor::runMeasurements(const DS18B20_Info &device) {
 
   ESP_LOGI(logTag, "starting temp collection task for %s", sensor.name);
 
-  for (owb_rmt_driver_info driver_info;;) {
+  while (true) {
     vTaskDelay(secToTicks(2));
 
+    owb_rmt_driver_info driver_info{};
     std::unique_ptr<OneWireBus, decltype(&owb_uninitialize)> owb{
         owb_rmt_initialize(&driver_info, sensor.pin, sensor.txChan,
                            sensor.rxChan),

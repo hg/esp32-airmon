@@ -82,7 +82,7 @@ static bool handleUnknown(mqtt::Client &client, const mqtt::Message &msg) {
 }
 
 static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
-  std::vector<std::string_view> tokens;
+  CommandArgs tokens;
 
   const auto end = msg.data.cend();
   for (auto begin = msg.data.cbegin(); begin != end;) {
@@ -94,11 +94,11 @@ static bool handleMessage(mqtt::Client &client, const mqtt::Message &msg) {
         break;
       }
     }
-    begin = std::find_if(nextSpace, end, [](char c) { return !isspace(c); });
+    begin = std::find_if(nextSpace, end, isgraph);
   }
 
   if (tokens.empty()) {
-    client.send(msg.topic, "no command specified");
+    client.send(msg.respTopic, "no command specified");
     return false;
   }
 

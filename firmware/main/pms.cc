@@ -118,7 +118,7 @@ void Response::swapBytes() {
 
       if (sendEach) {
         ms.time = getTimestamp();
-        ms.set(res);
+        ms.set(res.pm);
         if (!station.queue->putRetrying(ms)) {
           ESP_LOGE(logTag, "could not queue particulate measurement");
         }
@@ -126,8 +126,8 @@ void Response::swapBytes() {
         sum.addMeasurement(res);
       }
 
-      ESP_LOGI(logTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm1McgAtm,
-               res.pm2McgAtm, res.pm10McgAtm);
+      ESP_LOGI(logTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm.atm.pm1Mcg,
+               res.pm.atm.pm2Mcg, res.pm.atm.pm10Mcg);
 
       ++successful;
     }
@@ -148,7 +148,8 @@ void Response::swapBytes() {
       lastWake = xTaskGetTickCount();
     } else {
       if (!sendEach) {
-        ms.set(sum);
+        sum.calcAvg();
+        ms.set(sum.pm);
         ESP_LOGI(logTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1Mcg,
                  ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
 
@@ -203,24 +204,17 @@ void Station::start(Queue<Measurement> &msQueue) {
 }
 
 void ResponseSum::addMeasurement(const Response &resp) {
-  atm.pm1Mcg += resp.pm1McgAtm;
-  atm.pm2Mcg += resp.pm2McgAtm;
-  atm.pm10Mcg += resp.pm10McgAtm;
-
-  std.pm1Mcg += resp.pm1McgStd;
-  std.pm2Mcg += resp.pm2McgStd;
-  std.pm10Mcg += resp.pm10McgStd;
-
-  cnt.pm03Count += resp.pm03Count;
-  cnt.pm05Count += resp.pm05Count;
-  cnt.pm1Count += resp.pm1Count;
-  cnt.pm2Count += resp.pm2Count;
-  cnt.pm5Count += resp.pm5Count;
-  cnt.pm10Count += resp.pm10Count;
-
+  pm += resp.pm;
   ++count;
 }
 
 void ResponseSum::reset() { memset(this, 0, sizeof(*this)); }
+
+void ResponseSum::calcAvg() {
+  if (count > 0) {
+    pm /= count;
+    count = 0;
+  }
+}
 
 } // namespace pms

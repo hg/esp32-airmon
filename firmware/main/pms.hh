@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pm.hh"
 #include "queue.hh"
 #include <driver/gpio.h>
 #include <driver/uart.h>
@@ -23,18 +24,7 @@ struct Command {
 struct Response {
   uint16_t magic;
   uint16_t frameLen;
-  uint16_t pm1McgStd;
-  uint16_t pm2McgStd;
-  uint16_t pm10McgStd;
-  uint16_t pm1McgAtm;
-  uint16_t pm2McgAtm;
-  uint16_t pm10McgAtm;
-  uint16_t pm03Count;
-  uint16_t pm05Count;
-  uint16_t pm1Count;
-  uint16_t pm2Count;
-  uint16_t pm5Count;
-  uint16_t pm10Count;
+  Pm<uint16_t> pm;
   uint16_t reserved;
   uint16_t checksum;
 
@@ -56,7 +46,7 @@ struct Station {
 
   esp_err_t flushInput();
 
-  esp_err_t flushOutput(const TickType_t wait);
+  esp_err_t flushOutput(TickType_t wait);
 
   void start(Queue<Measurement> &msQueue);
 
@@ -68,27 +58,12 @@ private:
 };
 
 struct ResponseSum {
+  Pm<uint32_t> pm;
   uint32_t count;
-  struct {
-    uint32_t pm1Mcg;
-    uint32_t pm2Mcg;
-    uint32_t pm10Mcg;
-  } std;
-  struct {
-    uint32_t pm1Mcg;
-    uint32_t pm2Mcg;
-    uint32_t pm10Mcg;
-  } atm;
-  struct {
-    uint32_t pm03Count;
-    uint32_t pm05Count;
-    uint32_t pm1Count;
-    uint32_t pm2Count;
-    uint32_t pm5Count;
-    uint32_t pm10Count;
-  } cnt;
 
   void addMeasurement(const Response &resp);
+
+  void calcAvg();
 
   void reset();
 };
