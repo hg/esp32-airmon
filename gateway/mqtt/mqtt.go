@@ -28,7 +28,7 @@ func (s *Settings) validate() error {
 	return nil
 }
 
-func newMqttClient(settings *Settings) mqtt.Client {
+func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.SetResumeSubs(true)
 	opts.AddBroker(settings.Broker)
@@ -40,6 +40,8 @@ func newMqttClient(settings *Settings) mqtt.Client {
 		opts.SetPassword(settings.Pass)
 	}
 
+	opts.SetOnConnectHandler(onConn)
+
 	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		log.Print("mqtt msg received:", string(msg.Payload()))
 	})
@@ -48,38 +50,47 @@ func newMqttClient(settings *Settings) mqtt.Client {
 	return mqttClient
 }
 
+type connHandler struct {
+	write chan<- *influxdb2Write.Point
+}
+
+func (h *connHandler) onConnect(client mqtt.Client) {
+	checkError := func(token mqtt.Token) {
+		if token.Wait() && token.Error() != nil {
+			log.Print(errors.Wrap(token.Error(), "could not subscribe to mqtt topic"))
+		}
+	}
+
+	token := client.Subscribe("meas/temp", 0, func(client mqtt.Client, msg mqtt.Message) {
+		if point, err := mon.ParseTemperature(msg.Payload()); err == nil {
+			h.write <- point
+		} else {
+			log.Print("could not parse temperature: ", err)
+		}
+	})
+	checkError(token)
+
+	token = client.Subscribe("meas/part", 0, func(client mqtt.Client, msg mqtt.Message) {
+		if point, err := mon.ParseParticulates(msg.Payload()); err == nil {
+			h.write <- point
+		} else {
+			log.Print("could not parse particulates: ", err)
+		}
+	})
+	checkError(token)
+}
+
 func StartMqtt(settings *Settings, write chan<- *influxdb2Write.Point) error {
 	if err := settings.validate(); err != nil {
 		return err
 	}
 
-	client := newMqttClient(settings)
+	handler := connHandler{write}
+	client := newMqttClient(settings, handler.onConnect)
 
 	token := client.Connect()
 	if token.Wait() && token.Error() != nil {
 		return errors.Wrap(token.Error(), "mqtt connect failed")
-	}
-
-	client.Subscribe("meas/temp", 0, func(client mqtt.Client, msg mqtt.Message) {
-		if point, err := mon.ParseTemperature(msg.Payload()); err == nil {
-			write <- point
-		} else {
-			log.Print("could not parse temperature: ", err)
-		}
-	})
-	if token.Wait() && token.Error() != nil {
-		return errors.Wrap(token.Error(), "could not subscribe to mqtt topic")
-	}
-
-	client.Subscribe("meas/part", 0, func(client mqtt.Client, msg mqtt.Message) {
-		if point, err := mon.ParseParticulates(msg.Payload()); err == nil {
-			write <- point
-		} else {
-			log.Print("could not parse particulates: ", err)
-		}
-	})
-	if token.Wait() && token.Error() != nil {
-		return errors.Wrap(token.Error(), "could not subscribe to mqtt topic")
 	}
 
 	return nil
