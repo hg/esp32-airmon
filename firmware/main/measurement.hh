@@ -5,7 +5,7 @@
 #include "utils.hh"
 #include <ctime>
 
-enum class MeasurementType { TEMPERATURE, PARTICULATES };
+enum class MeasurementType { TEMPERATURE, PARTICULATES, CO2 };
 
 struct Measurement {
   MeasurementType type;
@@ -13,6 +13,7 @@ struct Measurement {
   const char *sensor;
   union {
     float temp;
+    uint16_t co2;
     Pm<uint16_t> pm;
   };
 

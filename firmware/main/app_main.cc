@@ -1,4 +1,5 @@
 #include "ca.hh"
+#include "co2.hh"
 #include "commands.hh"
 #include "common.hh"
 #include "dallas.hh"
@@ -67,6 +68,10 @@ extern "C" [[noreturn]] void app_main() {
 
   for (pms::Station &stat : pmsStations) {
     stat.start(queue);
+  }
+
+  for (co2::Sensor &sensor : co2Sensors) {
+    sensor.start(queue);
   }
 
   appState->wait(AppState::STATE_NET_CONNECTED);
