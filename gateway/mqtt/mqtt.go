@@ -54,30 +54,36 @@ type connHandler struct {
 	write chan<- *influxdb2Write.Point
 }
 
-func (h *connHandler) onConnect(client mqtt.Client) {
-	checkError := func(token mqtt.Token) {
-		if token.Wait() && token.Error() != nil {
-			log.Print(errors.Wrap(token.Error(), "could not subscribe to mqtt topic"))
+type topic struct {
+	topic  string
+	mapper func(data []byte) (*influxdb2Write.Point, error)
+}
+
+var topics = []*topic{
+	{"meas/part", mon.ParseParticulates},
+	{"meas/temp", mon.ParseTemperature},
+	{"meas/co2", mon.ParseCarbonDioxide},
+}
+
+func subscribe(t *topic, client mqtt.Client, writeCh chan<- *influxdb2Write.Point) {
+	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
+		if point, err := t.mapper(msg.Payload()); err == nil {
+			writeCh <- point
+		} else {
+			log.Print("could not parse ", t.topic, " data: ", err)
 		}
+	})
+
+	if token.Wait() && token.Error() != nil {
+		log.Print(errors.Wrap(token.Error(), "could not subscribe to mqtt topic "+t.topic))
 	}
+}
 
-	token := client.Subscribe("meas/temp", 0, func(client mqtt.Client, msg mqtt.Message) {
-		if point, err := mon.ParseTemperature(msg.Payload()); err == nil {
-			h.write <- point
-		} else {
-			log.Print("could not parse temperature: ", err)
-		}
-	})
-	checkError(token)
-
-	token = client.Subscribe("meas/part", 0, func(client mqtt.Client, msg mqtt.Message) {
-		if point, err := mon.ParseParticulates(msg.Payload()); err == nil {
-			h.write <- point
-		} else {
-			log.Print("could not parse particulates: ", err)
-		}
-	})
-	checkError(token)
+func (h *connHandler) onConnect(client mqtt.Client) {
+	for _, t := range topics {
+		log.Print("subscribing to topic ", t.topic)
+		go subscribe(t, client, h.write)
+	}
 }
 
 func StartMqtt(settings *Settings, write chan<- *influxdb2Write.Point) error {
