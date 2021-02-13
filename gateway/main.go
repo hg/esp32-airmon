@@ -22,14 +22,14 @@ func main() {
 
 	flag.Parse()
 
-	writeCh, err := influx.NewWriter(infs)
+	sender, err := influx.NewWriter(infs)
 	if err != nil {
 		log.Fatal("could not prepare InfluxDB writer: ", err)
 	}
 
-	go airkaz.Collect(writeCh)
+	go airkaz.Collect(sender)
 
-	if err = mqtt.StartMqtt(&mqts, writeCh); err != nil {
+	if err = mqtt.StartMqtt(&mqts, sender); err != nil {
 		log.Fatal("could not create MQTT client: ", err)
 	}
 

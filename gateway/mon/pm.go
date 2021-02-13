@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
-	"log"
 	"time"
 )
 
@@ -30,7 +29,7 @@ type particulates struct {
 	} `json:"cnt"`
 }
 
-func (t *particulates) toPoint() *influxdb2Write.Point {
+func (t *particulates) ToPoint() *influxdb2Write.Point {
 	return influxdb2.NewPoint("particulates",
 		map[string]string{
 			"device": t.Device,
@@ -53,11 +52,8 @@ func (t *particulates) toPoint() *influxdb2Write.Point {
 		time.Unix(t.Time, 0))
 }
 
-func ParseParticulates(data []byte) (*influxdb2Write.Point, error) {
-	var part particulates
-	if err := json.Unmarshal(data, &part); err != nil {
-		log.Print("could not parse particulates json: ", err)
-		return nil, err
-	}
-	return part.toPoint(), nil
+func ParseParticulates(data []byte) (PointSource, error) {
+	ms := &particulates{}
+	err := json.Unmarshal(data, ms)
+	return ms, err
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
-	"log"
 	"time"
 )
 
@@ -15,7 +14,7 @@ type co2 struct {
 	Co2    uint16 `json:"co2"`
 }
 
-func (t *co2) toPoint() *influxdb2Write.Point {
+func (t *co2) ToPoint() *influxdb2Write.Point {
 	return influxdb2.NewPoint("co2",
 		map[string]string{
 			"device": t.Device,
@@ -27,11 +26,8 @@ func (t *co2) toPoint() *influxdb2Write.Point {
 		time.Unix(t.Time, 0))
 }
 
-func ParseCarbonDioxide(data []byte) (*influxdb2Write.Point, error) {
-	var co2 co2
-	if err := json.Unmarshal(data, &co2); err != nil {
-		log.Print("could not parse co2 json: ", err)
-		return nil, err
-	}
-	return co2.toPoint(), nil
+func ParseCarbonDioxide(data []byte) (PointSource, error) {
+	ms := &co2{}
+	err := json.Unmarshal(data, ms)
+	return ms, err
 }

@@ -2,8 +2,8 @@ package airkaz
 
 import (
 	"encoding/json"
+	"github.com/hg/airmon/influx"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"log"
@@ -60,14 +60,17 @@ type measurement struct {
 	Hour     string   `json:"hour"`
 }
 
-func Collect(write chan<- *influxdb2Write.Point) {
+func Collect(sender *influx.MeasurementSender) {
 	client := newProxiedClient()
 
 	lastUpdates := map[int64]Time{}
 
 	for {
+
 		if measurements, err := getResponse(client); err == nil {
 			log.Print("found ", len(measurements), " airkaz measurements")
+
+			toSave := make([]*measurement, len(measurements))
 
 			for _, meas := range measurements {
 				if meas.Error != 0 || meas.Status != "active" || meas.Hour != "now" {
@@ -77,9 +80,14 @@ func Collect(write chan<- *influxdb2Write.Point) {
 					continue
 				}
 				lastUpdates[meas.Id] = meas.Date
-
-				go saveMeasurement(meas, write)
+				toSave = append(toSave, &meas)
 			}
+
+			go func() {
+				for _, ms := range toSave {
+					saveMeasurement(ms, sender)
+				}
+			}()
 		} else {
 			log.Print("could not get response from airkaz: ", err)
 		}
@@ -113,14 +121,14 @@ func getResponse(client *http.Client) ([]measurement, error) {
 	return measurements, nil
 }
 
-func saveMeasurement(meas measurement, write chan<- *influxdb2Write.Point) {
+func saveMeasurement(meas *measurement, sender *influx.MeasurementSender) {
 	tags := map[string]string{
 		"city":    meas.City,
 		"station": meas.Name,
 	}
 
 	save := func(kind string, fields map[string]interface{}) {
-		write <- influxdb2.NewPoint(kind, tags, fields, meas.Date.Time)
+		sender.Send(influxdb2.NewPoint(kind, tags, fields, meas.Date.Time))
 	}
 
 	if meas.Pm25Curr != nil && meas.Pm10Curr != nil {

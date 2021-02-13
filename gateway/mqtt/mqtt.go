@@ -2,8 +2,8 @@ package mqtt
 
 import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/mon"
-	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
 	"github.com/pkg/errors"
 	"log"
 	"strings"
@@ -51,12 +51,12 @@ func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client
 }
 
 type connHandler struct {
-	write chan<- *influxdb2Write.Point
+	sender *influx.MeasurementSender
 }
 
 type topic struct {
 	topic  string
-	mapper func(data []byte) (*influxdb2Write.Point, error)
+	mapper func(data []byte) (mon.PointSource, error)
 }
 
 var topics = []*topic{
@@ -65,10 +65,10 @@ var topics = []*topic{
 	{"meas/co2", mon.ParseCarbonDioxide},
 }
 
-func subscribe(t *topic, client mqtt.Client, writeCh chan<- *influxdb2Write.Point) {
+func subscribe(t *topic, client mqtt.Client, sender *influx.MeasurementSender) {
 	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
-		if point, err := t.mapper(msg.Payload()); err == nil {
-			writeCh <- point
+		if ms, err := t.mapper(msg.Payload()); err == nil {
+			sender.Send(ms.ToPoint())
 		} else {
 			log.Print("could not parse ", t.topic, " data: ", err)
 		}
@@ -82,16 +82,16 @@ func subscribe(t *topic, client mqtt.Client, writeCh chan<- *influxdb2Write.Poin
 func (h *connHandler) onConnect(client mqtt.Client) {
 	for _, t := range topics {
 		log.Print("subscribing to topic ", t.topic)
-		go subscribe(t, client, h.write)
+		go subscribe(t, client, h.sender)
 	}
 }
 
-func StartMqtt(settings *Settings, write chan<- *influxdb2Write.Point) error {
+func StartMqtt(settings *Settings, sender *influx.MeasurementSender) error {
 	if err := settings.validate(); err != nil {
 		return err
 	}
 
-	handler := connHandler{write}
+	handler := connHandler{sender}
 	client := newMqttClient(settings, handler.onConnect)
 
 	token := client.Connect()
