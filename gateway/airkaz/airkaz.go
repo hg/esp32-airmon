@@ -3,42 +3,18 @@ package airkaz
 import (
 	"encoding/json"
 	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/net"
+	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
-	"strings"
 	"time"
 )
 
 var dataRe = regexp.MustCompile(`(?si)<script.*>.*sensors_data\s*=\s*(\[.+])</script`)
-
-const timeFormat = "2006-01-02 15:04:05"
-
-type Time struct {
-	time.Time
-}
-
-var stationLocation *time.Location
-
-func init() {
-	var err error
-	if stationLocation, err = time.LoadLocation("Asia/Almaty"); err != nil {
-		log.Fatal("could not find airkaz timezone")
-	}
-}
-
-func (t *Time) UnmarshalJSON(b []byte) (err error) {
-	s := strings.Trim(string(b), `"`)
-	if s == "null" {
-		t.Time = time.Time{}
-		return nil
-	}
-	t.Time, err = time.ParseInLocation(timeFormat, s, stationLocation)
-	return err
-}
 
 type measurement struct {
 	Id       int64    `json:"id,string"`
@@ -56,21 +32,19 @@ type measurement struct {
 	Press    *float64 `json:"press,string"`
 	Error    int64    `json:"error,string"`
 	Status   string   `json:"status"`
-	Date     Time     `json:"date"`
+	Date     tm.Time  `json:"date"`
 	Hour     string   `json:"hour"`
 }
 
 func Collect(sender *influx.MeasurementSender) {
-	client := newProxiedClient()
-
-	lastUpdates := map[int64]Time{}
+	client := net.NewProxiedClient()
+	lastUpdates := map[int64]tm.Time{}
 
 	for {
-
 		if measurements, err := getResponse(client); err == nil {
 			log.Print("found ", len(measurements), " airkaz measurements")
 
-			toSave := make([]*measurement, len(measurements))
+			toSave := make([]measurement, len(measurements))
 
 			for _, meas := range measurements {
 				if meas.Error != 0 || meas.Status != "active" || meas.Hour != "now" {
@@ -80,7 +54,7 @@ func Collect(sender *influx.MeasurementSender) {
 					continue
 				}
 				lastUpdates[meas.Id] = meas.Date
-				toSave = append(toSave, &meas)
+				toSave = append(toSave, meas)
 			}
 
 			go func() {
@@ -121,7 +95,7 @@ func getResponse(client *http.Client) ([]measurement, error) {
 	return measurements, nil
 }
 
-func saveMeasurement(meas *measurement, sender *influx.MeasurementSender) {
+func saveMeasurement(meas measurement, sender *influx.MeasurementSender) {
 	tags := map[string]string{
 		"city":    meas.City,
 		"station": meas.Name,

@@ -1,4 +1,4 @@
-package airkaz
+package net
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func newProxiedClient() *http.Client {
+func NewProxiedClient() *http.Client {
 	proxyDialer := proxy.FromEnvironmentUsing(&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,

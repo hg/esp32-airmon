@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/hg/airmon/airkaz"
+	"github.com/hg/airmon/ceb"
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/mqtt"
 	"log"
@@ -28,6 +29,7 @@ func main() {
 	}
 
 	go airkaz.Collect(sender)
+	go ceb.Collect(sender)
 
 	if err = mqtt.StartMqtt(&mqts, sender); err != nil {
 		log.Fatal("could not create MQTT client: ", err)
