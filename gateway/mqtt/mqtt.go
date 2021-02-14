@@ -6,6 +6,7 @@ import (
 	"github.com/hg/airmon/mon"
 	"github.com/pkg/errors"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -13,6 +14,18 @@ type Settings struct {
 	Broker string
 	User   string
 	Pass   string
+}
+
+func (s *Settings) SetFromEnvironment() {
+	if s.Broker == "" {
+		s.Broker = os.Getenv("MQTT_BROKER")
+	}
+	if s.User == "" {
+		s.User = os.Getenv("MQTT_USER")
+	}
+	if s.Pass == "" {
+		s.Pass = os.Getenv("MQTT_PASS")
+	}
 }
 
 func (s *Settings) validate() error {

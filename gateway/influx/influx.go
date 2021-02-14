@@ -7,6 +7,7 @@ import (
 	influxdb2Api "github.com/influxdata/influxdb-client-go/v2/api"
 	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
 	"log"
+	"os"
 	"time"
 )
 
@@ -15,6 +16,21 @@ type Settings struct {
 	Org    string
 	Bucket string
 	Token  string
+}
+
+func (s *Settings) SetFromEnvironment() {
+	if s.Uri == "" {
+		s.Uri = os.Getenv("INFLUX_URI")
+	}
+	if s.Org == "" {
+		s.Org = os.Getenv("INFLUX_ORG")
+	}
+	if s.Bucket == "" {
+		s.Bucket = os.Getenv("INFLUX_BUCKET")
+	}
+	if s.Token == "" {
+		s.Token = os.Getenv("INFLUX_TOKEN")
+	}
 }
 
 func (s *Settings) validate() error {

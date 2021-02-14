@@ -22,6 +22,8 @@ func main() {
 	flag.StringVar(&infs.Token, "influx.token", "", "InfluxDB access token")
 
 	flag.Parse()
+	mqts.SetFromEnvironment()
+	infs.SetFromEnvironment()
 
 	sender, err := influx.NewWriter(infs)
 	if err != nil {
