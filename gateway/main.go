@@ -5,6 +5,7 @@ import (
 	"github.com/hg/airmon/airkaz"
 	"github.com/hg/airmon/ceb"
 	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/kazhydromet"
 	"github.com/hg/airmon/mqtt"
 	"log"
 	"os"
@@ -45,6 +46,7 @@ func main() {
 		log.Fatal("could not prepare InfluxDB writer: ", err)
 	}
 
+	go kazhydromet.Collect(sender)
 	go airkaz.Collect(sender)
 	go ceb.Collect(sender)
 
