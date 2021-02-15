@@ -7,6 +7,8 @@ import (
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/mqtt"
 	"log"
+	"os"
+	"runtime/pprof"
 )
 
 func main() {
@@ -21,9 +23,22 @@ func main() {
 	flag.StringVar(&infs.Bucket, "influx.bucket", "airmon", "InfluxDB server URI")
 	flag.StringVar(&infs.Token, "influx.token", "", "InfluxDB access token")
 
+	profile := flag.String("profile", "", "write cpu profile to this file")
+
 	flag.Parse()
 	mqts.SetFromEnvironment()
 	infs.SetFromEnvironment()
+
+	if *profile != "" {
+		f, err := os.Create(*profile)
+		if err != nil {
+			log.Fatal("could not create cpu profile file: ", err)
+		}
+		defer f.Close()
+
+		_ = pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	sender, err := influx.NewWriter(infs)
 	if err != nil {
