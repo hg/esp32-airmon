@@ -7,9 +7,7 @@ import (
 	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"regexp"
 	"time"
 )
@@ -44,7 +42,7 @@ func Collect(sender *influx.MeasurementSender) {
 		if measurements, err := getResponse(client); err == nil {
 			log.Print("found ", len(measurements), " airkaz measurements")
 
-			toSave := make([]measurement, len(measurements))
+			toSave := make([]*measurement, len(measurements))
 
 			for _, meas := range measurements {
 				if meas.Error != 0 || meas.Status != "active" || meas.Hour != "now" {
@@ -70,16 +68,10 @@ func Collect(sender *influx.MeasurementSender) {
 	}
 }
 
-func getResponse(client *http.Client) ([]measurement, error) {
-	resp, err := client.Get("https://airkaz.org/")
+func getResponse(client *net.Client) ([]*measurement, error) {
+	body, err := client.Get("https://airkaz.org/")
 	if err != nil {
-		return nil, errors.Wrap(err, "airkaz get failed")
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errors.Wrap(err, "could not read response: ")
+		return nil, err
 	}
 
 	matches := dataRe.FindSubmatch(body)
@@ -87,7 +79,7 @@ func getResponse(client *http.Client) ([]measurement, error) {
 		return nil, errors.Wrap(err, "measurement json not found in response")
 	}
 
-	var measurements []measurement
+	var measurements []*measurement
 	if err = json.Unmarshal(matches[1], &measurements); err != nil {
 		return nil, errors.Wrap(err, "could not parse response: ")
 	}
@@ -95,7 +87,7 @@ func getResponse(client *http.Client) ([]measurement, error) {
 	return measurements, nil
 }
 
-func saveMeasurement(meas measurement, sender *influx.MeasurementSender) {
+func saveMeasurement(meas *measurement, sender *influx.MeasurementSender) {
 	tags := map[string]string{
 		"city":    meas.City,
 		"station": meas.Name,

@@ -1,14 +1,11 @@
 package kazhydromet
 
 import (
-	"encoding/json"
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/net"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"strconv"
 	"time"
 )
@@ -51,7 +48,7 @@ type entry struct {
 }
 
 type collector struct {
-	client    *http.Client
+	client    *net.Client
 	sender    *influx.MeasurementSender
 	stations  map[int64]*station
 	lastAt    map[string]time.Time
@@ -168,19 +165,10 @@ func (c *collector) loadMeasurements() ([]*measurement, error) {
 		url += "?after=" + c.lastRunAt.UTC().Format(time.RFC3339)
 	}
 
-	resp, err := c.client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
 	var measurements []*measurement
-	if err = json.Unmarshal(body, &measurements); err == nil {
+
+	err := c.client.GetJSON(url, &measurements)
+	if err == nil {
 		c.lastRunAt = startedAt
 	}
 
@@ -188,19 +176,10 @@ func (c *collector) loadMeasurements() ([]*measurement, error) {
 }
 
 func (c *collector) loadStations() error {
-	resp, err := c.client.Get("http://atmosphera.kz:4004/stations")
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
 	var stations []*station
-	if err = json.Unmarshal(body, &stations); err != nil {
+
+	err := c.client.GetJSON("http://atmosphera.kz:4004/stations", &stations)
+	if err != nil {
 		return err
 	}
 

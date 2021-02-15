@@ -1,15 +1,11 @@
 package ceb
 
 import (
-	"encoding/json"
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"github.com/pkg/errors"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -33,7 +29,7 @@ func Collect(sender *influx.MeasurementSender) {
 	for {
 		if measurements, err := getResponse(client); err == nil {
 			latest := time.Time{}
-			toSave := make([]measurement, len(measurements))
+			toSave := make([]*measurement, len(measurements))
 
 			log.Print("found ", len(measurements), " ceb measurements")
 
@@ -61,7 +57,7 @@ func Collect(sender *influx.MeasurementSender) {
 	}
 }
 
-func saveMeasurement(ms measurement, sender *influx.MeasurementSender) {
+func saveMeasurement(ms *measurement, sender *influx.MeasurementSender) {
 	endOfFormula := strings.Index(ms.PollutantFull, "-")
 	if endOfFormula <= 0 {
 		return
@@ -83,19 +79,7 @@ func saveMeasurement(ms measurement, sender *influx.MeasurementSender) {
 	sender.Send(influxdb2.NewPoint("ceb", tags, fields, ms.Date.Time))
 }
 
-func getResponse(client *http.Client) ([]measurement, error) {
-	resp, err := client.Get("https://ceb-uk.kz/map/ajax.php?markers")
-	if err != nil {
-		return nil, errors.Wrap(err, "data fetch failed")
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errors.Wrap(err, "could not read response")
-	}
-
-	var measurements []measurement
-	err = json.Unmarshal(body, &measurements)
-	return measurements, err
+func getResponse(client *net.Client) (measurements []*measurement, err error) {
+	err = client.GetJSON("https://ceb-uk.kz/map/ajax.php?markers", &measurements)
+	return
 }
