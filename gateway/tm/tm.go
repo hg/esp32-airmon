@@ -21,6 +21,14 @@ func init() {
 	}
 }
 
+func (t *Time) MarshalJSON() ([]byte, error) {
+	if t == nil {
+		return []byte("null"), nil
+	}
+	formatted := t.Time.Format(timeFormat)
+	return []byte(formatted), nil
+}
+
 func (t *Time) UnmarshalJSON(b []byte) (err error) {
 	s := strings.Trim(string(b), `"`)
 	if s == "null" {
