@@ -85,7 +85,7 @@ func (c *Client) Get(uri string) ([]byte, error) {
 
 func (c *Client) GetJSON(url string, buf interface{}) error {
 	data, err := c.Get(url)
-	if err != nil {
+	if err == nil {
 		err = json.Unmarshal(data, buf)
 	}
 	return err

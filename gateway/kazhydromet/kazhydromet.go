@@ -50,16 +50,13 @@ type entry struct {
 	st *station
 }
 
-type measTime struct {
-	LastAt    map[string]time.Time `json:"lastAt"`
-	LastRunAt time.Time            `json:"lastRunAt"`
-}
+type measurementTimes map[string]time.Time
 
 type collector struct {
 	client   *net.Client
 	sender   *influx.MeasurementSender
 	stations map[int64]*station
-	time     *measTime
+	times    measurementTimes
 }
 
 func lastMapKey(ms *measurement) string {
@@ -71,37 +68,35 @@ func Collect(sender *influx.MeasurementSender) {
 		client:   net.NewProxiedClient(),
 		sender:   sender,
 		stations: make(map[int64]*station),
-		time: &measTime{
-			LastAt: make(map[string]time.Time),
-		},
+		times:    make(measurementTimes),
 	}
 
 	if savedTime := loadSavedTime(); savedTime != nil {
-		c.time = savedTime
+		c.times = savedTime
 	}
 
 	for {
 		entries, err := c.loadData()
 		if err == nil {
-			go saveTime(c.time)
+			go saveTime(c.times)
 			err = c.saveData(entries)
 		}
 		if err != nil {
 			log.Print("could not save kazhydromet data: ", err)
 		}
-		time.Sleep(20 * time.Minute)
+		time.Sleep(time.Hour)
 	}
 }
 
-func saveTime(ms *measTime) {
+func saveTime(ms measurementTimes) {
 	err := storage.Save(timeFilename, ms)
 	if err != nil {
 		log.Print("could not save kazhydromet measurement times: ", err)
 	}
 }
 
-func loadSavedTime() *measTime {
-	var mt *measTime
+func loadSavedTime() measurementTimes {
+	var mt measurementTimes
 
 	err := storage.Load(timeFilename, &mt)
 	if err == nil {
@@ -148,6 +143,7 @@ func (c *collector) loadData() ([]entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Print("loaded ", len(measurements), " kazhydromet measurements")
 
 	var entries []entry
 	for _, meas := range measurements {
@@ -176,11 +172,10 @@ func (c *collector) loadData() ([]entry, error) {
 		}
 
 		key := lastMapKey(meas)
-
-		if lastAt, ok := c.time.LastAt[key]; ok && !meas.Date.After(lastAt) {
+		if lastAt, ok := c.times[key]; ok && !meas.Date.After(lastAt) {
 			continue
 		}
-		c.time.LastAt[key] = meas.Date
+		c.times[key] = meas.Date
 
 		entries = append(entries, entry{ms: meas, st: stat})
 	}
@@ -188,22 +183,10 @@ func (c *collector) loadData() ([]entry, error) {
 	return entries, nil
 }
 
-func (c *collector) loadMeasurements() ([]*measurement, error) {
-	startedAt := time.Now()
-
+func (c *collector) loadMeasurements() (measurements []*measurement, err error) {
 	url := "http://atmosphera.kz:4004/averages"
-	if !c.time.LastRunAt.IsZero() {
-		url += "?after=" + c.time.LastRunAt.UTC().Format(time.RFC3339)
-	}
-
-	var measurements []*measurement
-
-	err := c.client.GetJSON(url, &measurements)
-	if err == nil {
-		c.time.LastRunAt = startedAt
-	}
-
-	return measurements, err
+	err = c.client.GetJSON(url, &measurements)
+	return
 }
 
 func (c *collector) loadStations() error {

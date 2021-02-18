@@ -3,6 +3,7 @@ package ceb
 import (
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/net"
+	"github.com/hg/airmon/storage"
 	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"log"
@@ -22,42 +23,74 @@ type measurement struct {
 	Date          tm.Time `json:"cdate"`
 }
 
+const timeFilename = "ceb-times.json"
+
+type collector struct {
+	sender *influx.MeasurementSender
+	client *net.Client
+	lastAt time.Time
+}
+
 func Collect(sender *influx.MeasurementSender) {
-	client := net.NewProxiedClient()
-	lastAt := time.Time{}
-
+	col := collector{
+		sender: sender,
+		client: net.NewProxiedClient(),
+		lastAt: loadLastAt(),
+	}
 	for {
-		if measurements, err := getResponse(client); err == nil {
-			latest := time.Time{}
-			toSave := make([]*measurement, len(measurements))
-
-			log.Print("found ", len(measurements), " ceb measurements")
-
-			for _, meas := range measurements {
-				if meas.Date.After(lastAt) {
-					latest = meas.Date.Time
-					toSave = append(toSave, meas)
-				}
-			}
-
-			if !latest.IsZero() {
-				lastAt = latest
-			}
-
-			go func() {
-				for _, ms := range toSave {
-					saveMeasurement(ms, sender)
-				}
-			}()
-		} else {
-			log.Print("could not load data: ", err)
+		if err := col.run(); err != nil {
+			log.Print("could not get ceb measurements: ", err)
 		}
-
 		time.Sleep(5 * time.Minute)
 	}
 }
 
-func saveMeasurement(ms *measurement, sender *influx.MeasurementSender) {
+func (c *collector) run() error {
+	measurements, err := c.getResponse()
+	if err != nil {
+		return err
+	}
+
+	latest := time.Time{}
+	toSave := make([]measurement, len(measurements))
+
+	log.Print("found ", len(measurements), " ceb measurements")
+
+	for _, ms := range measurements {
+		if ms.Date.After(c.lastAt) {
+			latest = ms.Date.Time
+			toSave = append(toSave, ms)
+		}
+	}
+
+	if !latest.IsZero() {
+		go saveLastAt(latest)
+		c.lastAt = latest
+	}
+
+	go func() {
+		for _, ms := range toSave {
+			c.saveMeasurement(&ms)
+		}
+	}()
+}
+
+func loadLastAt() time.Time {
+	var tm time.Time
+	if err := storage.Load(timeFilename, &tm); err != nil {
+		log.Print("could not load last ceb time: ", err)
+		tm = time.Time{}
+	}
+	return tm
+}
+
+func saveLastAt(tm time.Time) {
+	if err := storage.Save(timeFilename, tm); err != nil {
+		log.Print("could not save ceb last time: ", err)
+	}
+}
+
+func (c *collector) saveMeasurement(ms *measurement) {
 	endOfFormula := strings.Index(ms.PollutantFull, "-")
 	if endOfFormula <= 0 {
 		return
@@ -76,10 +109,10 @@ func saveMeasurement(ms *measurement, sender *influx.MeasurementSender) {
 		"lon":      ms.Lon,
 	}
 
-	sender.Send(influxdb2.NewPoint("ceb", tags, fields, ms.Date.Time))
+	c.sender.Send(influxdb2.NewPoint("ceb", tags, fields, ms.Date.Time))
 }
 
-func getResponse(client *net.Client) (measurements []*measurement, err error) {
-	err = client.GetJSON("https://ceb-uk.kz/map/ajax.php?markers", &measurements)
+func (c *collector) getResponse() (measurements []measurement, err error) {
+	err = c.client.GetJSON("https://ceb-uk.kz/map/ajax.php?markers", &measurements)
 	return
 }
