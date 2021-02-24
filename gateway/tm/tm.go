@@ -1,12 +1,18 @@
 package tm
 
 import (
-	"log"
+	"github.com/hg/airmon/logger"
+	"go.uber.org/zap"
 	"strings"
 	"time"
 )
 
-const timeFormat = "2006-01-02 15:04:05"
+const (
+	timeFormat = "2006-01-02 15:04:05"
+	tzName     = "Asia/Almaty"
+)
+
+var log = logger.Get(logger.Time)
 
 type Time struct {
 	time.Time
@@ -16,8 +22,8 @@ var location *time.Location
 
 func init() {
 	var err error
-	if location, err = time.LoadLocation("Asia/Almaty"); err != nil {
-		log.Fatal("could not find timezone")
+	if location, err = time.LoadLocation(tzName); err != nil {
+		log.Fatal("could not find timezone", zap.String("timezone", tzName))
 	}
 }
 

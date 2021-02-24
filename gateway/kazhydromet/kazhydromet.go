@@ -2,16 +2,21 @@ package kazhydromet
 
 import (
 	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/storage"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
-	"log"
+	"go.uber.org/zap"
 	"strconv"
 	"time"
 )
 
-const timeFilename = "kazhydromet-times.json"
+var log = logger.Get(logger.Kazhydromet)
+
+const (
+	timeFilename = "kazhydromet-times.json"
+)
 
 type measurement struct {
 	Id        string    `json:"id"`
@@ -82,7 +87,7 @@ func Collect(sender *influx.MeasurementSender) {
 			err = c.saveData(entries)
 		}
 		if err != nil {
-			log.Print("could not save kazhydromet data: ", err)
+			log.Error("could not save kazhydromet data", zap.Error(err))
 		}
 		time.Sleep(time.Hour)
 	}
@@ -91,7 +96,7 @@ func Collect(sender *influx.MeasurementSender) {
 func saveTime(ms measurementTimes) {
 	err := storage.Save(timeFilename, ms)
 	if err != nil {
-		log.Print("could not save kazhydromet measurement times: ", err)
+		log.Error("could not save kazhydromet measurement times", zap.Error(err))
 	}
 }
 
@@ -103,7 +108,7 @@ func loadSavedTime() measurementTimes {
 		return mt
 	}
 
-	log.Print("could not parse kazhydromet measurement times: ", err)
+	log.Error("could not parse kazhydromet measurement times", zap.Error(err))
 	return nil
 }
 
@@ -143,7 +148,8 @@ func (c *collector) loadData() ([]entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Print("loaded ", len(measurements), " kazhydromet measurements")
+
+	log.Info("loaded measurements", zap.Int("count", len(measurements)))
 
 	var entries []entry
 	for _, meas := range measurements {
@@ -153,20 +159,20 @@ func (c *collector) loadData() ([]entry, error) {
 			if refreshedStations {
 				// We have already refreshed station data in this iteration.
 				// It's an invalid station id, there's nothing we can do.
-				log.Print("station id ", meas.StationId, " not found")
+				log.Error("station not found", zap.Int64("id", meas.StationId))
 				continue
 			}
 
 			refreshedStations = true
 
 			if err = c.loadStations(); err != nil {
-				log.Print("could not load station data: ", err)
+				log.Error("could not load station data", zap.Error(err))
 				continue
 			}
 
 			stat = c.stations[meas.StationId]
 			if stat == nil {
-				log.Print("station id ", meas.StationId, " not found")
+				log.Error("station not found", zap.Int64("id", meas.StationId))
 				continue
 			}
 		}

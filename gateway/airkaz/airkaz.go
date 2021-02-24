@@ -3,12 +3,13 @@ package airkaz
 import (
 	"encoding/json"
 	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/storage"
 	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
-	"log"
+	"go.uber.org/zap"
 	"regexp"
 	"time"
 )
@@ -45,6 +46,8 @@ type collector struct {
 
 const lastUpdatesFilename = "airkaz-times.json"
 
+var log = logger.Get(logger.Airkaz)
+
 func Collect(sender *influx.MeasurementSender) {
 	col := collector{
 		sender:      sender,
@@ -58,7 +61,7 @@ func Collect(sender *influx.MeasurementSender) {
 
 	for {
 		if err := col.run(); err != nil {
-			log.Print("could not save airkaz data: ", err)
+			log.Error("could not save airkaz data", zap.Error(err))
 		}
 		time.Sleep(5 * time.Minute)
 	}
@@ -70,7 +73,7 @@ func loadLastUpdates() *lastUpdates {
 	err := storage.Load(lastUpdatesFilename, &lu)
 	if err != nil {
 		lu = nil
-		log.Print("could not load airkaz update times: ", err)
+		log.Error("could not load airkaz update times", zap.Error(err))
 	}
 
 	return lu
@@ -78,7 +81,7 @@ func loadLastUpdates() *lastUpdates {
 
 func (c *collector) saveLastUpdates() {
 	if err := storage.Save(lastUpdatesFilename, c.lastUpdates); err != nil {
-		log.Print("could not save airkaz update times: ", err)
+		log.Error("could not save airkaz update times", zap.Error(err))
 	}
 }
 
@@ -88,7 +91,7 @@ func (c *collector) run() error {
 		return err
 	}
 
-	log.Print("found ", len(measurements), " airkaz measurements")
+	log.Info("measurements loaded", zap.Int("count", len(measurements)))
 
 	toSave := make([]measurement, len(measurements))
 

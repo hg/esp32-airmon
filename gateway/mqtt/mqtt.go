@@ -1,19 +1,29 @@
 package mqtt
 
 import (
+	"flag"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mon"
 	"github.com/pkg/errors"
-	"log"
+	"go.uber.org/zap"
 	"os"
 	"strings"
 )
+
+var log = logger.Get(logger.Mqtt)
 
 type Settings struct {
 	Broker string
 	User   string
 	Pass   string
+}
+
+func (s *Settings) AddFlags() {
+	flag.StringVar(&s.Broker, "mqtt.broker", "tcp://localhost:1883", "the broker URI")
+	flag.StringVar(&s.User, "mqtt.user", "", "MQTT username")
+	flag.StringVar(&s.Pass, "mqtt.pass", "", "MQTT password")
 }
 
 func (s *Settings) SetFromEnvironment() {
@@ -33,10 +43,11 @@ func (s *Settings) validate() error {
 		return errors.New("MQTT broker is empty")
 	}
 	if s.User != "" {
-		log.Print("using MQTT username ", s.User)
+		log.Info("using username", zap.String("username", s.User))
 	}
 	if s.Pass != "" {
-		log.Print("using MQTT password ", strings.Repeat("*", len(s.Pass)))
+		log.Info("using MQTT password",
+			zap.String("password", strings.Repeat("*", len(s.Pass))))
 	}
 	return nil
 }
@@ -56,7 +67,7 @@ func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client
 	opts.SetOnConnectHandler(onConn)
 
 	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
-		log.Print("mqtt msg received:", string(msg.Payload()))
+		log.Info("message received", zap.String("message", string(msg.Payload())))
 	})
 
 	mqttClient := mqtt.NewClient(opts)
@@ -83,18 +94,22 @@ func subscribe(t *topic, client mqtt.Client, sender *influx.MeasurementSender) {
 		if ms, err := t.mapper(msg.Payload()); err == nil {
 			sender.Send(ms.ToPoint())
 		} else {
-			log.Print("could not parse ", t.topic, " data: ", err)
+			log.Error("could not parse data",
+				zap.String("topic", t.topic),
+				zap.Error(err))
 		}
 	})
 
 	if token.Wait() && token.Error() != nil {
-		log.Print(errors.Wrap(token.Error(), "could not subscribe to mqtt topic "+t.topic))
+		log.Error("could not subscribe to mqtt",
+			zap.String("topic", t.topic),
+			zap.Error(token.Error()))
 	}
 }
 
 func (h *connHandler) onConnect(client mqtt.Client) {
 	for _, t := range topics {
-		log.Print("subscribing to topic ", t.topic)
+		log.Info("subscribing to topic", zap.String("topic", t.topic))
 		go subscribe(t, client, h.sender)
 	}
 }

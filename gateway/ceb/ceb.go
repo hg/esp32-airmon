@@ -2,11 +2,12 @@ package ceb
 
 import (
 	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/storage"
 	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"log"
+	"go.uber.org/zap"
 	"strings"
 	"time"
 )
@@ -31,6 +32,8 @@ type collector struct {
 	lastAt time.Time
 }
 
+var log = logger.Get(logger.Ceb)
+
 func Collect(sender *influx.MeasurementSender) {
 	col := collector{
 		sender: sender,
@@ -39,7 +42,7 @@ func Collect(sender *influx.MeasurementSender) {
 	}
 	for {
 		if err := col.run(); err != nil {
-			log.Print("could not get ceb measurements: ", err)
+			log.Error("could not get ceb measurements", zap.Error(err))
 		}
 		time.Sleep(5 * time.Minute)
 	}
@@ -54,7 +57,7 @@ func (c *collector) run() error {
 	latest := time.Time{}
 	toSave := make([]measurement, len(measurements))
 
-	log.Print("found ", len(measurements), " ceb measurements")
+	log.Info("loaded measurements", zap.Int("count", len(measurements)))
 
 	for _, ms := range measurements {
 		if ms.Date.After(c.lastAt) {
@@ -73,12 +76,14 @@ func (c *collector) run() error {
 			c.saveMeasurement(&ms)
 		}
 	}()
+
+	return nil
 }
 
 func loadLastAt() time.Time {
 	var tm time.Time
 	if err := storage.Load(timeFilename, &tm); err != nil {
-		log.Print("could not load last ceb time: ", err)
+		log.Error("could not load last ceb time", zap.Error(err))
 		tm = time.Time{}
 	}
 	return tm
@@ -86,7 +91,7 @@ func loadLastAt() time.Time {
 
 func saveLastAt(tm time.Time) {
 	if err := storage.Save(timeFilename, tm); err != nil {
-		log.Print("could not save ceb last time: ", err)
+		log.Error("could not save ceb last time", zap.Error(err))
 	}
 }
 

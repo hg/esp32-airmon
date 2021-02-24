@@ -3,19 +3,30 @@ package influx
 import (
 	"context"
 	"errors"
+	"flag"
+	"github.com/hg/airmon/logger"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	influxdb2Api "github.com/influxdata/influxdb-client-go/v2/api"
 	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
-	"log"
+	"go.uber.org/zap"
 	"os"
 	"time"
 )
+
+var log = logger.Get(logger.Influx)
 
 type Settings struct {
 	Uri    string
 	Org    string
 	Bucket string
 	Token  string
+}
+
+func (s *Settings) AddFlags() {
+	flag.StringVar(&s.Uri, "influx.uri", "http://localhost:8086", "InfluxDB server URI")
+	flag.StringVar(&s.Org, "influx.org", "home", "InfluxDB organization name")
+	flag.StringVar(&s.Bucket, "influx.bucket", "airmon", "InfluxDB server URI")
+	flag.StringVar(&s.Token, "influx.token", "", "InfluxDB access token")
 }
 
 func (s *Settings) SetFromEnvironment() {
@@ -44,7 +55,7 @@ func (s *Settings) validate() error {
 		return errors.New("InfluxDB bucket is empty")
 	}
 	if s.Token == "" {
-		log.Print("InfluxDB token is empty, set it if you see authentication errors")
+		log.Warn("token is empty, set it if you see authentication errors")
 	}
 	return nil
 }
@@ -57,6 +68,7 @@ func newClient(settings Settings) influxdb2Api.WriteAPIBlocking {
 type MeasurementSender struct {
 	api influxdb2Api.WriteAPIBlocking
 	ch  chan *influxdb2Write.Point
+	ctx context.Context
 }
 
 func (ms *MeasurementSender) Send(point *influxdb2Write.Point) bool {
@@ -66,10 +78,10 @@ func (ms *MeasurementSender) Send(point *influxdb2Write.Point) bool {
 			return true
 
 		case <-time.After(5 * time.Second):
-			log.Print("timed out while trying to send measurement")
+			log.Error("timed out while trying to send measurement")
 
 			if retry >= 3 {
-				log.Print("could not send measurement, discarding point")
+				log.Error("could not send measurement, discarding point")
 				return false
 			}
 			<-ms.ch // drop the oldest measurement and retry
@@ -78,18 +90,16 @@ func (ms *MeasurementSender) Send(point *influxdb2Write.Point) bool {
 }
 
 func (ms *MeasurementSender) receive() {
-	ctx := context.Background()
-
 	for point := range ms.ch {
-		if err := ms.api.WritePoint(ctx, point); err == nil {
-			log.Print("point written")
+		if err := ms.api.WritePoint(ms.ctx, point); err == nil {
+			log.Debug("point written")
 		} else {
-			log.Print("could not write point: ", err)
+			log.Error("could not write point", zap.Error(err))
 		}
 	}
 }
 
-func NewWriter(settings Settings) (*MeasurementSender, error) {
+func NewSender(settings Settings) (*MeasurementSender, error) {
 	if err := settings.validate(); err != nil {
 		return nil, err
 	}
@@ -97,6 +107,7 @@ func NewWriter(settings Settings) (*MeasurementSender, error) {
 	sender := &MeasurementSender{
 		ch:  make(chan *influxdb2Write.Point, 2000),
 		api: newClient(settings),
+		ctx: context.Background(),
 	}
 	go sender.receive()
 

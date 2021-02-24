@@ -3,7 +3,9 @@ package net
 import (
 	"context"
 	"encoding/json"
+	"github.com/hg/airmon/logger"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"math/rand"
@@ -21,6 +23,8 @@ var userAgents = []string{
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 11_2_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.2 Safari/605.1.15",
 	"Mozilla/5.0 (Android 11; Mobile; rv:68.0) Gecko/68.0 Firefox/85.0",
 }
+
+var log = logger.Get(logger.Net)
 
 type Client struct {
 	client *http.Client
@@ -76,6 +80,7 @@ func (c *Client) Get(uri string) ([]byte, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		log.Error("get failed", zap.Error(err))
 		return nil, errors.Wrap(err, "airkaz get failed")
 	}
 	defer resp.Body.Close()
@@ -87,6 +92,11 @@ func (c *Client) GetJSON(url string, buf interface{}) error {
 	data, err := c.Get(url)
 	if err == nil {
 		err = json.Unmarshal(data, buf)
+	}
+	if err != nil {
+		log.Error("getJson failed",
+			zap.String("url", url),
+			zap.Error(err))
 	}
 	return err
 }
