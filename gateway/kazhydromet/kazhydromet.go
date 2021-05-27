@@ -90,7 +90,7 @@ func Collect(sender *influx.MeasurementSender) {
 		if err != nil {
 			log.Error("could not save kazhydromet data", zap.Error(err))
 		}
-		time.Sleep(time.Hour)
+		time.Sleep(20 * time.Minute)
 	}
 }
 
