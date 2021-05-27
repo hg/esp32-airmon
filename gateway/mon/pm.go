@@ -2,9 +2,10 @@ package mon
 
 import (
 	"encoding/json"
+	"time"
+
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
-	"time"
 )
 
 type pmConcentration struct {

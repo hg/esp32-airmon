@@ -2,11 +2,12 @@ package storage
 
 import (
 	"encoding/json"
-	"github.com/hg/airmon/logger"
-	"go.uber.org/zap"
 	"io/ioutil"
 	"os"
 	"path"
+
+	"github.com/hg/airmon/logger"
+	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Storage)
@@ -18,8 +19,7 @@ func getPath(filename string) (string, error) {
 	}
 	dir = path.Join(dir, "airmon")
 
-	err := os.MkdirAll(dir, 0750)
-
+	err := os.MkdirAll(dir, 0o750)
 	if err != nil {
 		log.Error("could not create data directory",
 			zap.String("path", dir),
@@ -46,7 +46,7 @@ func Save(filename string, data interface{}) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(fullPath, serialized, 0640)
+	err = ioutil.WriteFile(fullPath, serialized, 0o640)
 	if err != nil {
 		log.Error("could not write file",
 			zap.String("path", fullPath),

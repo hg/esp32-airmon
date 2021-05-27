@@ -1,6 +1,9 @@
 package kazhydromet
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
@@ -8,8 +11,6 @@ import (
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"strconv"
-	"time"
 )
 
 var log = logger.Get(logger.Kazhydromet)

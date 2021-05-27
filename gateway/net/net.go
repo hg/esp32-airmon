@@ -3,16 +3,17 @@ package net
 import (
 	"context"
 	"encoding/json"
-	"github.com/hg/airmon/logger"
-	"github.com/pkg/errors"
-	"go.uber.org/zap"
-	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/hg/airmon/logger"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
+	"golang.org/x/net/proxy"
 )
 
 var userAgents = []string{

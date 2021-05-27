@@ -2,6 +2,9 @@ package airkaz
 
 import (
 	"encoding/json"
+	"regexp"
+	"time"
+
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
@@ -10,8 +13,6 @@ import (
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"regexp"
-	"time"
 )
 
 var dataRe = regexp.MustCompile(`(?si)<script.*>.*sensors_data\s*=\s*(\[.+])</script`)

@@ -2,14 +2,15 @@ package mqtt
 
 import (
 	"flag"
+	"os"
+	"strings"
+
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mon"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"os"
-	"strings"
 )
 
 var log = logger.Get(logger.Mqtt)

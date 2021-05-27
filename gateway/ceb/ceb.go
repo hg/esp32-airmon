@@ -1,6 +1,9 @@
 package ceb
 
 import (
+	"strings"
+	"time"
+
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
@@ -8,8 +11,6 @@ import (
 	"github.com/hg/airmon/tm"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"go.uber.org/zap"
-	"strings"
-	"time"
 )
 
 type measurement struct {

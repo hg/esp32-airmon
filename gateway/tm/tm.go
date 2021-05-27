@@ -1,10 +1,11 @@
 package tm
 
 import (
-	"github.com/hg/airmon/logger"
-	"go.uber.org/zap"
 	"strings"
 	"time"
+
+	"github.com/hg/airmon/logger"
+	"go.uber.org/zap"
 )
 
 const (

@@ -1,12 +1,15 @@
 package logger
 
 import (
-	"go.uber.org/zap"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
-var mu = sync.Mutex{}
-var loggers = make(map[string]*zap.Logger)
+var (
+	mu      = sync.Mutex{}
+	loggers = make(map[string]*zap.Logger)
+)
 
 const (
 	Main        = "main"

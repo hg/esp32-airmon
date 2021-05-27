@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"os"
+	"time"
+
 	"github.com/hg/airmon/logger"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	influxdb2Api "github.com/influxdata/influxdb-client-go/v2/api"
 	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
 	"go.uber.org/zap"
-	"os"
-	"time"
 )
 
 var log = logger.Get(logger.Influx)

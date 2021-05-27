@@ -3,6 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
+	"runtime/pprof"
+
 	"github.com/hg/airmon/airkaz"
 	"github.com/hg/airmon/ceb"
 	"github.com/hg/airmon/influx"
@@ -10,8 +13,6 @@ import (
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mqtt"
 	"go.uber.org/zap"
-	"os"
-	"runtime/pprof"
 )
 
 func main() {
