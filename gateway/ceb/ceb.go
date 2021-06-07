@@ -28,7 +28,7 @@ type measurement struct {
 
 const dataUrl = "https://ceb-uk.kz/map/ajax.php?markers"
 const timeFilename = "ceb-times.json"
-const staleMaxUpdates = 3
+const staleMaxUpdates = 5
 
 type repeat struct {
 	level float64
@@ -59,10 +59,10 @@ func (s *staleDetector) isStale(station string, pollutant string, level float64)
 	}
 
 	if rep.level == level {
-		rep.count++
 		if rep.count >= staleMaxUpdates {
 			return true
 		}
+		rep.count++
 	} else {
 		rep.level = level
 		rep.count = 0
