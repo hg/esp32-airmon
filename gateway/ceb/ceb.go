@@ -45,7 +45,7 @@ func Collect(sender *influx.MeasurementSender) {
 		if err := col.run(); err != nil {
 			log.Error("could not get ceb measurements", zap.Error(err))
 		}
-		time.Sleep(15 * time.Minute)
+		time.Sleep(10 * time.Minute)
 	}
 }
 
