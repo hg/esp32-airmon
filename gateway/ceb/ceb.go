@@ -58,7 +58,12 @@ func (s *staleDetector) isStale(station string, pollutant string, level float64)
 		s.values[key] = rep
 	}
 
-	if rep.level == level {
+	// SO2 levels often exceed 750 ug/m3, but are capped by
+	// this value due to some limitation in the data provider.
+	// So 750 ug/m3 may be reported for many consecutive hours.
+	// This doesn't mean that the data is invalid.
+	// TODO: add ceiling checks for other pollutants
+	if rep.level == level && (pollutant != "SO2" || level != 750) {
 		if rep.count >= staleMaxUpdates {
 			return true
 		}
