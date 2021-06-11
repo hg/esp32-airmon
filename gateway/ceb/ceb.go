@@ -2,6 +2,7 @@ package ceb
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hg/airmon/influx"
@@ -25,9 +26,53 @@ type measurement struct {
 	Date          tm.Time `json:"cdate"`
 }
 
+const dataUrl = "https://ceb-uk.kz/map/ajax.php?markers"
 const timeFilename = "ceb-times.json"
+const staleMaxUpdates = 5
+
+type repeat struct {
+	level float64
+	count int
+}
+
+type staleDetector struct {
+	sync.Mutex
+	values map[string]*repeat
+}
+
+func newDetector() *staleDetector {
+	return &staleDetector{
+		values: map[string]*repeat{},
+	}
+}
+
+func (s *staleDetector) isStale(station string, pollutant string, level float64) bool {
+	s.Lock()
+	defer s.Unlock()
+
+	key := station + ":" + pollutant
+
+	rep, ok := s.values[key]
+	if !ok {
+		rep = &repeat{}
+		s.values[key] = rep
+	}
+
+	if rep.level == level {
+		if rep.count >= staleMaxUpdates {
+			return true
+		}
+		rep.count++
+	} else {
+		rep.level = level
+		rep.count = 0
+	}
+
+	return false
+}
 
 type collector struct {
+	stale  *staleDetector
 	sender *influx.MeasurementSender
 	client *net.Client
 	lastAt time.Time
@@ -38,6 +83,7 @@ var log = logger.Get(logger.Ceb)
 func Collect(sender *influx.MeasurementSender) {
 	col := collector{
 		sender: sender,
+		stale:  newDetector(),
 		client: net.NewProxiedClient(),
 		lastAt: loadLastAt(),
 	}
@@ -82,12 +128,12 @@ func (c *collector) run() error {
 }
 
 func loadLastAt() time.Time {
-	var tm time.Time
-	if err := storage.Load(timeFilename, &tm); err != nil {
+	var t time.Time
+	if err := storage.Load(timeFilename, &t); err != nil {
 		log.Error("could not load last ceb time", zap.Error(err))
-		tm = time.Time{}
+		t = time.Time{}
 	}
-	return tm
+	return t
 }
 
 func saveLastAt(tm time.Time) {
@@ -102,15 +148,27 @@ func (c *collector) saveMeasurement(ms *measurement) {
 		return
 	}
 
+	station := ms.Title
+	pollutant := ms.Pollutant
+	level := ms.ValueMg * 1000
+
+	if c.stale.isStale(station, pollutant, level) {
+		log.Error("value marked as stale and will not be saved",
+			zap.String("station", ms.Title),
+			zap.String("pollutant", ms.Pollutant),
+			zap.Float64("level", ms.ValueMg))
+		return
+	}
+
 	tags := map[string]string{
-		"station":   ms.Title,
+		"station":   station,
 		"address":   ms.Address,
 		"formula":   ms.PollutantFull[:endOfFormula],
-		"pollutant": ms.Pollutant,
+		"pollutant": pollutant,
 	}
 
 	fields := map[string]interface{}{
-		"level_ug": ms.ValueMg * 1000,
+		"level_ug": level,
 		"lat":      ms.Lat,
 		"lon":      ms.Lon,
 	}
@@ -119,6 +177,6 @@ func (c *collector) saveMeasurement(ms *measurement) {
 }
 
 func (c *collector) getResponse() (measurements []measurement, err error) {
-	err = c.client.GetJSON("https://ceb-uk.kz/map/ajax.php?markers", &measurements)
+	err = c.client.GetJSON(dataUrl, &measurements)
 	return
 }
