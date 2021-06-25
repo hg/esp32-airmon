@@ -1,0 +1,12 @@
+- hosts: all
+  gather_facts: no
+  become: yes
+  roles:
+    - mqtt
+    - db
+    - tor
+    - gateway
+    - web
+    - grafana
+  handlers:
+    - include: handlers/main.yml

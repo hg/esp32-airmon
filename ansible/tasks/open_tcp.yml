@@ -1,0 +1,7 @@
+- name: open port in firewall
+  lineinfile:
+    path: /etc/iptables/rules.v4
+    insertafter: ^:OUTPUT \w+ .+$
+    line: -A INPUT -p tcp -m tcp --dport {{ item }} -j ACCEPT
+  with_items: "{{ ports }}"
+  notify: reload iptables

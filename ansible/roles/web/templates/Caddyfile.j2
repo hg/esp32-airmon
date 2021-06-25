@@ -1,0 +1,16 @@
+(common) {
+    encode gzip
+
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+    }
+}
+
+{{ domain }} {
+    import common
+    reverse_proxy localhost:3000
+}
+
+import /etc/caddy/conf.d/*

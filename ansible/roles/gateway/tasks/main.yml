@@ -1,0 +1,34 @@
+- name: create user
+  user:
+    name: airmon
+    create_home: no
+    shell: /bin/false
+
+- name: create data directory
+  file:
+    path: /var/lib/airmon
+    state: directory
+    owner: airmon
+    group: airmon
+    mode: 0755
+
+- name: download binary
+  unarchive:
+    src: https://github.com/hg/esp32-airmon/releases/download/0.1/airmon-gateway_0.1_linux_arm64.tar.gz
+    dest: /usr/local/bin
+    remote_src: yes
+  notify: restart gateway
+
+- name: create systemd unit
+  template:
+    src: gateway.service.j2
+    dest: /etc/systemd/system/airmon-gateway.service
+    mode: 0644
+  notify: restart gateway
+
+- name: enable systemd service
+  systemd:
+    name: airmon-gateway
+    daemon_reload: yes
+    enabled: yes
+    state: started

@@ -1,0 +1,4 @@
+- name: restart gateway
+  service:
+    name: airmon-gateway
+    state: restarted

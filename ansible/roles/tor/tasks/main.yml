@@ -1,0 +1,10 @@
+- name: install tor
+  package:
+    name: tor
+    state: present
+
+- name: enable and start tor
+  service:
+    name: tor@default
+    enabled: yes
+    state: started

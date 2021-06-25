@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -eu
+
+cd "$(dirname "$0")"
+
+type ansible-playbook &>/dev/null ||
+  pip3 install --user ansible
+
+ansible-playbook \
+  --inventory hosts \
+  --vault-password-file secrets/vault_pass \
+  site.yml "$@"

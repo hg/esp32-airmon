@@ -1,0 +1,24 @@
+- name: install mqtt broker
+  package:
+    name: mosquitto
+    state: present
+  notify: restart mqtt
+
+- name: copy configs
+  copy:
+    src: files/mosquitto/
+    dest: /etc/mosquitto/
+    owner: mosquitto
+    group: mosquitto
+    mode: 0755
+  notify: restart mqtt
+
+- name: enable mqtt
+  service:
+    name: mosquitto
+    enabled: yes
+    state: started
+
+- include: tasks/open_tcp.yml
+  vars:
+    ports: [8883]

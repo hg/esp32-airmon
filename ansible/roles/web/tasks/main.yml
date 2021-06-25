@@ -1,0 +1,30 @@
+- name: add signing key
+  apt_key:
+    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+
+- name: add repo
+  get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt
+    dest: /etc/apt/sources.list.d/caddy-stable.list
+
+- name: install caddy
+  apt:
+    name: caddy
+    update_cache: yes
+
+- name: create include conf dir
+  file:
+    path: /etc/caddy/conf.d
+    state: directory
+    mode: 0755
+
+- name: create config
+  template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    mode: 0644
+  notify: reload caddy
+
+- include: tasks/open_tcp.yml
+  vars:
+    ports: [80, 443]

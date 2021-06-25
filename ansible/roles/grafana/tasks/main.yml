@@ -1,0 +1,49 @@
+- name: add key
+  apt_key:
+    url: https://packages.grafana.com/gpg.key
+
+- name: add repo
+  copy:
+    content: deb https://packages.grafana.com/oss/deb stable main
+    dest: /etc/apt/sources.list.d/grafana.list
+    mode: 0644
+
+- name: install grafana
+  apt:
+    name: grafana
+    update_cache: yes
+
+- name: provision db
+  template:
+    src: influxdb.yml.j2
+    dest: /etc/grafana/provisioning/datasources/influxdb.yml
+    mode: 0644
+  notify: restart grafana
+
+- name: provision dashboard
+  copy:
+    src: files/dashboards/{{ item }}
+    dest: /etc/grafana/provisioning/dashboards/{{ item }}
+    mode: 0644
+  with_items:
+    - air.json
+    - config.yml
+  notify: restart grafana
+
+- name: set config
+  template:
+    src: grafana.ini.j2
+    dest: /etc/grafana/grafana.ini
+    mode: 0644
+  notify: restart grafana
+
+- name: start grafana
+  systemd:
+    name: grafana-server
+    daemon_reload: yes
+    enabled: yes
+    state: started
+
+- name: print login credentials
+  debug:
+    msg: "login credentials: {{ grafana.user }} / {{ grafana.password }}"

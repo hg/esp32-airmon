@@ -1,0 +1,36 @@
+- name: add signing key
+  apt_key:
+    url: https://repos.influxdata.com/influxdb.key
+
+- name: add repository
+  copy:
+    content: deb https://repos.influxdata.com/ubuntu focal stable
+    dest: /etc/apt/sources.list.d/influxdb.list
+    mode: 0644
+
+- name: install influxdb
+  apt:
+    name: influxdb2
+    update_cache: yes
+
+- name: enable influxd
+  service:
+    name: influxd
+    enabled: yes
+    state: started
+
+- name: setup influxdb
+  become: no
+  command: influx setup --org home --username neko --password johndoe42 --bucket default --retention 0 --force
+  args:
+    creates: ~/.influxdbv2/configs
+
+- name: get auth token
+  become: no
+  command: influx auth list --user neko --json
+  register: token_result
+
+- name: assign auth token
+  set_fact:
+    tokens:
+      influx: "{{ (token_result.stdout | from_json)[0].token }}"

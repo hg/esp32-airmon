@@ -1,0 +1,40 @@
+[Unit]
+Requires = network-online.target influxd.service tor.service mosquitto.service
+After    = network-online.target influxd.service tor.service mosquitto.service
+
+[Install]
+WantedBy = default.target
+
+[Service]
+Type           = simple
+ExecStart      = /usr/local/bin/airmon
+Environment    = INFLUX_TOKEN={{ tokens.influx }}
+Environment    = HTTP_PROXY=socks5h://localhost:9050
+User           = airmon
+Group          = airmon
+Restart        = on-failure
+RestartSec     = 10
+ReadWritePaths = /var/lib/airmon/
+
+# process isolation
+LockPersonality         = yes
+NoNewPrivileges         = yes
+PrivateDevices          = yes
+PrivateMounts           = yes
+PrivateTmp              = yes
+PrivateUsers            = yes
+ProtectClock            = yes
+ProtectControlGroups    = yes
+ProtectHome             = yes
+ProtectHostname         = yes
+ProtectKernelLogs       = yes
+ProtectKernelModules    = yes
+ProtectKernelTunables   = yes
+ProtectSystem           = full
+RemoveIPC               = yes
+RestrictAddressFamilies = AF_UNIX AF_NETLINK AF_INET AF_INET6
+RestrictNamespaces      = yes
+RestrictRealtime        = yes
+RestrictSUIDSGID        = yes
+SystemCallArchitectures = native
+SystemCallFilter        = ~@clock @cpu-emulation @privileged @module @raw-io @reboot @mount

@@ -1,0 +1,5 @@
+domain: air.8086.cf
+grafana:
+  user: admin
+  password: "{{ lookup('password', 'secrets/grafana_{{ inventory_hostname }} chars=ascii_letters,digits,hexdigits') }}"
+  secret_key: "{{ lookup('password', 'secrets/key_{{ inventory_hostname }} chars=ascii_letters,digits,hexdigits') }}"
