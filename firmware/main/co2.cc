@@ -115,6 +115,11 @@ void Sensor::start(Queue<Measurement> &msQueue) {
     return std::nullopt;
   }
 
+  if (response.co2 <= 0) {
+    ESP_LOGE(kTag, "sensor returned zero or negative CO2 (%d)", response.co2);
+    return std::nullopt;
+  }
+
   const auto level = static_cast<Co2Level>(PP_NTOHS(response.co2));
 
   return std::make_optional(level);

@@ -28,7 +28,7 @@ struct Co2Response {
   Address address;
   FunctionCode functionCode;
   uint8_t len;
-  uint16_t co2;
+  int16_t co2;
   uint16_t crc;
 } __attribute__((packed));
 
