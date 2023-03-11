@@ -19,6 +19,7 @@ const (
 	Kazhydromet = "kazhydromet"
 	Time        = "time"
 	Mqtt        = "mqtt"
+	OpenData    = "opendata"
 	Net         = "net"
 	Storage     = "storage"
 )
