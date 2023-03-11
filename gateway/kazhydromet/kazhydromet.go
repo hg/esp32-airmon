@@ -1,6 +1,7 @@
 package kazhydromet
 
 import (
+	"os"
 	"strconv"
 	"time"
 
@@ -26,7 +27,6 @@ type measurement struct {
 	StationId int64     `json:"stationId"`
 	Code      string    `json:"code"`
 	Unit      string    `json:"unit"`
-	Limit     *float64  `json:"pdk"`
 }
 
 type station struct {
@@ -129,7 +129,6 @@ func (c *collector) saveData(entries []entry) error {
 			"lat":   ent.st.Latitude,
 			"lon":   ent.st.Longitude,
 			"value": ent.ms.Value,
-			"limit": ent.ms.Limit,
 		}
 
 		point := influxdb2.NewPoint("kazhydromet", tags, fields, ent.ms.Date)
@@ -191,7 +190,8 @@ func (c *collector) loadData() ([]entry, error) {
 }
 
 func (c *collector) loadMeasurements() (measurements []*measurement, err error) {
-	url := "http://atmosphera.kz:4004/averages"
+	key := os.Getenv("KAZHYDROMET_KEY")
+	url := "http://atmosphera.kz:4003/simple/averages/last?key=" + key
 	err = c.client.GetJSON(url, &measurements)
 	return
 }

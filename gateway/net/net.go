@@ -37,8 +37,8 @@ func randomUserAgent() string {
 
 func NewProxiedClient() *Client {
 	proxyDialer := proxy.FromEnvironmentUsing(&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
+		Timeout:   180 * time.Second,
+		KeepAlive: 180 * time.Second,
 	})
 	return &Client{
 		client: &http.Client{
