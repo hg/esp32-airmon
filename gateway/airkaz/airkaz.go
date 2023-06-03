@@ -147,7 +147,10 @@ func (c *collector) saveMeasurement(meas *measurement) {
 		c.sender.Send(influxdb2.NewPoint(kind, tags, fields, meas.Date.Time))
 	}
 
-	pmData := make(map[string]interface{})
+	pmData := map[string]interface{}{
+		"lat": meas.Lat,
+		"lon": meas.Lng,
+	}
 	if meas.Pm25Curr != nil {
 		pmData["pm25"] = uint16(*meas.Pm25Curr)
 	}
