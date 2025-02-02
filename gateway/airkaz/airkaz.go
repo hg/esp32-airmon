@@ -100,6 +100,9 @@ func (c *collector) run() error {
 		if meas.Error != 0 || meas.Status != "active" || meas.Hour != "now" {
 			continue
 		}
+		if meas.Date.Time.After(time.Now()) {
+			meas.Date.Time = meas.Date.Add(-time.Hour)
+		}
 		if last, ok := c.lastUpdates[meas.Id]; ok && !meas.Date.After(last.Time) {
 			continue
 		}
