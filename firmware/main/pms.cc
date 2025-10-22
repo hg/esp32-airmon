@@ -84,7 +84,6 @@ bool Station::collectionIter(ResponseSum &avg) const {
 [[noreturn]] void Station::taskCollection(void *const arg) {
   Station &station{*reinterpret_cast<Station *>(arg)};
 
-  ResponseSum avg{};
   Measurement ms{.type = MeasurementType::PARTICULATES, .sensor = station.name};
 
   while (true) {
@@ -99,7 +98,8 @@ bool Station::collectionIter(ResponseSum &avg) const {
     int warmup = 0;
 
     while (true) {
-      avg.reset();
+      Timer tm{};
+      ResponseSum avg{};
 
       for (int iter = 0; iter < 20; ++iter) {
         if (!station.collectionIter(avg)) {
@@ -123,8 +123,9 @@ bool Station::collectionIter(ResponseSum &avg) const {
       ms.time = getTimestamp();
       ms.set(avg.pm);
 
-      ESP_LOGI(logTag, "avg PM: 1=%uµg, 2.5=%uµg, 10=%uµg", ms.pm.atm.pm1Mcg,
-               ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
+      ESP_LOGI(logTag, "avg PM: 1=%uµg, 2.5=%uµg, 10=%uµg (in %d ms)",
+               ms.pm.atm.pm1Mcg, ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg,
+               tm.millis());
 
       if (!station.queue->putRetrying(ms)) {
         ESP_LOGE(logTag, "could not queue averaged PM measurement");
@@ -174,8 +175,6 @@ void ResponseSum::add(const Response &resp) {
   pm += resp.pm;
   ++count;
 }
-
-void ResponseSum::reset() { memset(this, 0, sizeof(*this)); }
 
 void ResponseSum::avg() {
   if (count > 0) {

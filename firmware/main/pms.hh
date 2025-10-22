@@ -39,7 +39,6 @@ struct ResponseSum {
 
   void add(const Response &resp);
   void avg();
-  void reset();
 };
 
 struct Station {
