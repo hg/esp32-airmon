@@ -23,11 +23,8 @@ struct Message {
 
 class Client {
 public:
-  Client(std::string_view brokerUri, std::string_view caCert,
-         std::string_view username, std::string_view password);
-
+  Client(const char *brokerUri, const char *hint, const char *psk);
   Client(const Client &) = delete;
-
   ~Client();
 
   Client &operator=(const Client &) = delete;
@@ -44,8 +41,7 @@ private:
 
   Queue<Message *> msgQueue{10};
   esp_mqtt_client_handle_t handle;
-  const std::string_view cert;
-  const EventGroupHandle_t event;
+  EventGroupHandle_t event;
 };
 
 } // namespace mqtt

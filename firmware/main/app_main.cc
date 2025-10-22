@@ -1,4 +1,3 @@
-#include "ca.hh"
 #include "co2.hh"
 #include "common.hh"
 #include "dallas.hh"
@@ -59,8 +58,7 @@ extern "C" [[noreturn]] void app_main() {
 
   appState->wait(AppState::STATE_NET_CONNECTED);
 
-  mqtt::Client client{CONFIG_MQTT_BROKER_URI, caPemStart, CONFIG_MQTT_USERNAME,
-                      CONFIG_MQTT_PASSWORD};
+  mqtt::Client client{CONFIG_MQTT_BROKER_URI, CONFIG_DEV_NAME, CONFIG_MQTT_PSK};
 
   appState->wait(AppState::STATE_TIME_VALID);
 

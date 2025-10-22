@@ -1,6 +1,8 @@
 #include "mqtt.hh"
 #include "common.hh"
+#include "esp_tls.h"
 #include "utils.hh"
+
 #include <esp_log.h>
 
 namespace mqtt {
@@ -51,18 +53,41 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
   return ESP_OK;
 }
 
-Client::Client(std::string_view brokerUri, std::string_view caCert,
-               std::string_view username, std::string_view password)
-    : cert{caCert}, event{xEventGroupCreate()} {
+// convert hex string to array of bytes and return how many bytes were stored
+static size_t hex_to_bytes(const char *str, uint8_t *buf) {
+  const size_t hex_len = strlen(str);
+  configASSERT(hex_len % 2 == 0);
+
+  const size_t psk_len = hex_len / 2;
+
+  for (size_t i = 0; i < psk_len; ++i) {
+    char b[3] = {0, 0, 0};
+    b[0] = str[i * 2];
+    b[1] = str[i * 2 + 1];
+    buf[i] = strtol(b, nullptr, 16);
+  }
+
+  return psk_len;
+}
+
+Client::Client(const char *brokerUri, const char *hint, const char *psk)
+    : event{xEventGroupCreate()} {
+
+  uint8_t *buf = new uint8_t[strlen(psk) / 2];
+  size_t psk_len = hex_to_bytes(psk, buf);
+
+  auto key = new psk_hint_key_t{
+      .key = buf,
+      .key_size = psk_len,
+      .hint = hint,
+  };
 
   const esp_mqtt_client_config_t conf{
       .event_handle = handleEvent,
-      .uri = brokerUri.data(),
-      .username = username.data(),
-      .password = password.data(),
+      .uri = brokerUri,
       .keepalive = 30,
       .user_context = this,
-      .cert_pem = caCert.data(),
+      .psk_hint_key = key,
   };
   handle = esp_mqtt_client_init(&conf);
   configASSERT(handle);

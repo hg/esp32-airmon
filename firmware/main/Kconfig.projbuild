@@ -30,16 +30,12 @@ config WIFI_PASSWORD
 
 config MQTT_BROKER_URI
 	string "URI of MQTT broker"
-	default "mqtts://mqtt.eclipse.org"
+	default "mqtts://mqtt.eclipse.org:1833"
 	help
 		URI of MQTT broker to send measurement data to
 
-config MQTT_USERNAME
-	string "MQTT auth username"
-	default DEV_NAME
+config MQTT_PSK
+	string "Pre-shared key of MQTT broker"
+	default "hex-string-without-psk-hint"
 
-config MQTT_PASSWORD
-	string "MQTT auth password"
-	default "l33th4xx0r"
 endmenu
-
