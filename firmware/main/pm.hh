@@ -33,7 +33,7 @@ template <typename T> struct Pm {
     });
   }
 
-  template <typename R> Pm<T> &operator/=(const R divisor) {
+  template <typename R> Pm &operator/=(const R divisor) {
     return map<R>([divisor](const T val) { return val / divisor; });
   }
 
@@ -41,7 +41,7 @@ private:
   template <typename R> using BinaryMapper = std::function<T(R in, T out)>;
   template <typename R> using UnaryMapper = std::function<T(T val)>;
 
-  template <typename R> Pm<T> &map(const UnaryMapper<R> &mapper) {
+  template <typename R> Pm &map(const UnaryMapper<R> &mapper) {
     T *dst = reinterpret_cast<T *>(this);
     T *const dstEnd = dst + sizeof(Pm<T>) / sizeof(T);
 
@@ -51,7 +51,7 @@ private:
   }
 
   template <typename R>
-  Pm<T> &map(const Pm<R> &rhs, const BinaryMapper<R> &mapper) {
+  Pm &map(const Pm<R> &rhs, const BinaryMapper<R> &mapper) {
     T *dst = reinterpret_cast<T *>(this);
     const R *src = reinterpret_cast<const R *>(&rhs);
     const R *const srcEnd = src + sizeof(Pm<R>) / sizeof(R);

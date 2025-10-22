@@ -2,7 +2,6 @@
 
 #include "pm.hh"
 #include "pms.hh"
-#include "utils.hh"
 #include <ctime>
 
 enum class MeasurementType { TEMPERATURE, PARTICULATES, CO2 };

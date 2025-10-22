@@ -12,8 +12,8 @@ static void handleIpEvent([[maybe_unused]] void *const arg,
 
   switch (event_id) {
   case IP_EVENT_STA_GOT_IP: {
-    appState->set(AppState::STATE_NET_CONNECTED);
-    appState->reset(AppState::STATE_NET_DISCONNECTED);
+    state->set(AppState::STATE_NET_CONNECTED);
+    state->reset(AppState::STATE_NET_DISCONNECTED);
 
     const ip_event_got_ip_t *const evt =
         reinterpret_cast<ip_event_got_ip_t *>(event_data);
@@ -22,8 +22,8 @@ static void handleIpEvent([[maybe_unused]] void *const arg,
   }
 
   case IP_EVENT_STA_LOST_IP:
-    appState->reset(AppState::STATE_NET_CONNECTED);
-    appState->set(AppState::STATE_NET_DISCONNECTED);
+    state->reset(AppState::STATE_NET_CONNECTED);
+    state->set(AppState::STATE_NET_DISCONNECTED);
     ESP_LOGI(logTag, "lost ip");
     break;
 

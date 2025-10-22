@@ -29,7 +29,6 @@ struct Response {
   uint16_t checksum;
 
   [[nodiscard]] uint16_t calcChecksum() const;
-
   void swapBytes();
 } __attribute__((packed));
 

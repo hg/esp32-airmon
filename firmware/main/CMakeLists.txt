@@ -1,5 +1,6 @@
 idf_component_register(
-        SRCS app_main.cc time.cc mqtt.cc state.cc pms.cc measurement.cc dallas.cc net.cc co2.cc crc16.cc
+        SRCS app_main.cc time.cc mqtt.cc state.cc pms.cc measurement.cc dallas.cc net.cc
+             co2.cc crc16.cc timer.cc
         INCLUDE_DIRS "."
 )
 

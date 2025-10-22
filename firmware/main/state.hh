@@ -29,4 +29,4 @@ private:
   const EventGroupHandle_t handle;
 };
 
-extern State *appState;
+extern State *state;

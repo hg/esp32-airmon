@@ -11,7 +11,7 @@
 #include <driver/periph_ctrl.h>
 #include <esp_log.h>
 
-State *appState = nullptr;
+State *state = nullptr;
 
 static void initLog() {
 #ifdef DEBUG
@@ -27,7 +27,7 @@ static void restartPeripheral(const periph_module_t mod) {
 }
 
 static void initApp() {
-  appState = new State;
+  state = new State;
 
   // reset peripherals in case of prior crash
   restartPeripheral(PERIPH_RMT_MODULE);
@@ -41,8 +41,8 @@ static void initApp() {
 extern "C" [[noreturn]] void app_main() {
   initApp();
 
-  // start pollution collectors right away, we can fix time later
-  Queue<Measurement> queue{CONFIG_MEASUREMENT_QUEUE_SIZE};
+  // start collectors right away, we can fix time later
+  Queue<Measurement> queue{500};
 
   for (ds::TempSensor &sens : tempSensors) {
     sens.start(queue);
@@ -56,11 +56,11 @@ extern "C" [[noreturn]] void app_main() {
     sensor.start(queue);
   }
 
-  appState->wait(AppState::STATE_NET_CONNECTED);
+  state->wait(AppState::STATE_NET_CONNECTED);
 
   mqtt::Client client{CONFIG_MQTT_BROKER_URI, CONFIG_DEV_NAME, CONFIG_MQTT_PSK};
 
-  appState->wait(AppState::STATE_TIME_VALID);
+  state->wait(AppState::STATE_TIME_VALID);
 
   for (char buf[256];;) {
     client.waitReady();

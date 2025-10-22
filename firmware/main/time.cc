@@ -22,13 +22,13 @@ time_t getTimestamp() {
 static void onTimeUpdated([[maybe_unused]] timeval *const tm) {
   if (bootTimestamp == 0) {
     bootTimestamp = time(nullptr);
-    appState->set(AppState::STATE_TIME_VALID);
+    state->set(AppState::STATE_TIME_VALID);
   }
   ESP_LOGI(logTag, "sntp time update finished");
 }
 
 static void taskSntpUpdate([[maybe_unused]] void *const arg) {
-  appState->wait(AppState::STATE_NET_CONNECTED);
+  state->wait(AppState::STATE_NET_CONNECTED);
 
   sntp_setoperatingmode(SNTP_OPMODE_POLL);
   sntp_setservername(0, "pool.ntp.org");

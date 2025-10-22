@@ -9,13 +9,6 @@ config TEMPERATURE_PERIOD_SECONDS
 	range 1 3600
 	default 15
 
-config MEASUREMENT_QUEUE_SIZE
-	int "Measurement queue size"
-	range 1 10000
-	default 500
-	help
-		How many temperature & particulate measurements to keep in queue
-
 config WIFI_SSID
 	string "WiFi SSID"
 	default "myssid"
