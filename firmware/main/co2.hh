@@ -47,12 +47,11 @@ struct Sensor {
 
 private:
   [[noreturn]] static void taskCollection(void *arg);
+  [[nodiscard]] std::optional<Co2Level> readCo2() const;
 
-  [[nodiscard]] std::optional<Co2Level> readCo2();
-
-  int writeCommand(const cmd::Command &cmd);
-  esp_err_t flushInput();
-  esp_err_t flushOutput(TickType_t wait);
+  int writeCommand(const cmd::Command &cmd) const;
+  esp_err_t flushInput() const;
+  esp_err_t flushOutput(TickType_t wait) const;
 };
 
 } // namespace co2

@@ -62,13 +62,13 @@ namespace co2 {
   }
 }
 
-int Sensor::writeCommand(const cmd::Command &cmd) {
+int Sensor::writeCommand(const cmd::Command &cmd) const {
   return uart_write_bytes(port, &cmd, sizeof(cmd));
 }
 
-esp_err_t Sensor::flushInput() { return uart_flush_input(port); }
+esp_err_t Sensor::flushInput() const { return uart_flush_input(port); }
 
-esp_err_t Sensor::flushOutput(const TickType_t wait) {
+esp_err_t Sensor::flushOutput(const TickType_t wait) const {
   return uart_wait_tx_done(port, wait);
 }
 
@@ -96,7 +96,7 @@ void Sensor::start(Queue<Measurement> &msQueue) {
   xTaskCreate(taskCollection, buf, KiB(4), this, 4, nullptr);
 }
 
-[[nodiscard]] std::optional<Co2Level> Sensor::readCo2() {
+[[nodiscard]] std::optional<Co2Level> Sensor::readCo2() const {
   cmd::Co2Response response{};
 
   const auto read =

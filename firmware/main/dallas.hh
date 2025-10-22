@@ -20,8 +20,7 @@ struct TempSensor {
 
 private:
   [[noreturn]] static void taskCollection(void *arg);
-
-  void runMeasurements(const DS18B20_Info &device);
+  void runMeasurements(const DS18B20_Info &device) const;
 };
 
 } // namespace ds

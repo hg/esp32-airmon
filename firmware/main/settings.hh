@@ -24,7 +24,7 @@ struct AppSettings {
 
   esp_err_t read();
 
-  esp_err_t write();
+  esp_err_t write() const;
 
   bool set(std::string_view out, std::string_view value);
 

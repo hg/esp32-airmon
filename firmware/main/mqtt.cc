@@ -87,7 +87,7 @@ void Client::waitReady() const {
                       false, portMAX_DELAY);
 }
 
-bool Client::send(std::string_view topic, std::string_view data) {
+bool Client::send(std::string_view topic, std::string_view data) const {
   for (int result = -1; result < 0;) {
     result = esp_mqtt_client_publish(handle, topic.data(), data.data(),
                                      data.length(), 1, 1);
@@ -100,15 +100,15 @@ bool Client::send(std::string_view topic, std::string_view data) {
   return true;
 }
 
-void Client::setState(const MqttState bits) {
+void Client::setState(const MqttState bits) const {
   xEventGroupSetBits(event, static_cast<EventBits_t>(bits));
 }
 
-void Client::clearState(const MqttState bits) {
+void Client::clearState(const MqttState bits) const {
   xEventGroupClearBits(event, static_cast<EventBits_t>(bits));
 }
 
-bool Client::subscribe(std::string_view topic, int qos) {
+bool Client::subscribe(std::string_view topic, int qos) const {
   return esp_mqtt_client_subscribe(handle, topic.data(), qos) != ESP_OK;
 }
 

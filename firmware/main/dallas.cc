@@ -41,7 +41,7 @@ static std::unique_ptr<DS18B20_Info> findSensor(const OneWireBus &owb) {
   return device;
 }
 
-void TempSensor::runMeasurements(const DS18B20_Info &device) {
+void TempSensor::runMeasurements(const DS18B20_Info &device) const {
   Measurement ms{.type = MeasurementType::TEMPERATURE, .sensor = name};
   TickType_t lastWakeTime = xTaskGetTickCount();
 

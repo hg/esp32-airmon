@@ -49,7 +49,7 @@ esp_err_t AppSettings::read() {
   return anyError ? ESP_FAIL : ESP_OK;
 }
 
-esp_err_t AppSettings::write() {
+esp_err_t AppSettings::write() const {
   esp_err_t err;
   const std::unique_ptr<nvs::NVSHandle> nvs =
       nvs::open_nvs_handle("storage", NVS_READWRITE, &err);

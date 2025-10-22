@@ -34,16 +34,16 @@ public:
 
   void waitReady() const;
 
-  bool send(std::string_view topic, std::string_view data);
+  bool send(std::string_view topic, std::string_view data) const;
 
   [[nodiscard]] Message receive();
 
-  bool subscribe(std::string_view topic, int qos);
+  bool subscribe(std::string_view topic, int qos) const;
 
 private:
-  void clearState(MqttState bits);
+  void clearState(MqttState bits) const;
 
-  void setState(MqttState bits);
+  void setState(MqttState bits) const;
 
   static esp_err_t handleEvent(esp_mqtt_event_handle_t evt);
 
