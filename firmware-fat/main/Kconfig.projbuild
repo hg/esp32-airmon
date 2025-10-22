@@ -1,0 +1,55 @@
+menu "airmon configuration"
+
+config DEV_NAME
+	string "Unique device name"
+	default "esp"
+
+config TEMPERATURE_PERIOD_SECONDS
+	int "Temperature measurement period, seconds"
+	range 1 3600
+	default 15
+
+config PARTICULATE_PERIOD_SECONDS
+	int "Particulate measurement period, seconds"
+	range 1 86400
+	default 600
+
+config PARTICULATE_MEASUREMENTS
+	int "Number of PM measurements per each PARTICULATE_PERIOD_SECONDS"
+	range 1 PARTICULATE_PERIOD_SECONDS
+	default 30
+
+config MEASUREMENT_QUEUE_SIZE
+	int "Measurement queue size"
+	range 1 10000
+	default 500
+	help
+		How many temperature & particulate measurements to keep in queue
+
+config WIFI_SSID
+	string "WiFi SSID"
+	default "myssid"
+	help
+		SSID (network name) to connect to
+
+config WIFI_PASSWORD
+	string "WiFi Password"
+	default "mypassword"
+	help
+		WiFi password (WPA or WPA2) to use
+
+config MQTT_BROKER_URI
+	string "URI of MQTT broker"
+	default "mqtts://mqtt.eclipse.org"
+	help
+		URI of MQTT broker to send measurement data to
+
+config MQTT_USERNAME
+	string "MQTT auth username"
+	default DEV_NAME
+
+config MQTT_PASSWORD
+	string "MQTT auth password"
+	default "l33th4xx0r"
+endmenu
+
