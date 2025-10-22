@@ -29,7 +29,7 @@ static const Command kCmdReadCo2Level = initCmd({
 
 namespace co2 {
 
-[[noreturn]] void Sensor::collectionTask(void *const arg) {
+[[noreturn]] void Sensor::taskCollection(void *const arg) {
   Sensor &sensor{*reinterpret_cast<Sensor *>(arg)};
   Measurement ms{.type = MeasurementType::CO2, .sensor = sensor.name};
 
@@ -93,7 +93,7 @@ void Sensor::start(Queue<Measurement> &msQueue) {
   char buf[32];
   snprintf(buf, sizeof(buf), "co2_%s", name);
 
-  xTaskCreate(collectionTask, buf, KiB(2), this, 4, nullptr);
+  xTaskCreate(taskCollection, buf, KiB(4), this, 4, nullptr);
 }
 
 [[nodiscard]] std::optional<Co2Level> Sensor::readCo2() {

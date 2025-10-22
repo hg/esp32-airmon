@@ -22,12 +22,12 @@ template <typename T> struct Pm {
     T pm10Count;
   } cnt;
 
-  template <typename R> Pm<T> &operator=(const Pm<R> &rhs) {
+  template <typename R> Pm &operator=(const Pm<R> &rhs) {
     return map<R>(
         rhs, [](const R in, const T out) -> T { return static_cast<T>(in); });
   }
 
-  template <typename R> Pm<T> &operator+=(const Pm<R> &rhs) {
+  template <typename R> Pm &operator+=(const Pm<R> &rhs) {
     return map<R>(rhs, [](const R in, const T out) -> T {
       return static_cast<T>(in) + out;
     });
@@ -38,10 +38,8 @@ template <typename T> struct Pm {
   }
 
 private:
-  template <typename R>
-  using BinaryMapper = std::function<T(const R in, const T out)>;
-
-  template <typename R> using UnaryMapper = std::function<T(const T val)>;
+  template <typename R> using BinaryMapper = std::function<T(R in, T out)>;
+  template <typename R> using UnaryMapper = std::function<T(T val)>;
 
   template <typename R> Pm<T> &map(const UnaryMapper<R> &mapper) {
     T *dst = reinterpret_cast<T *>(this);

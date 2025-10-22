@@ -18,10 +18,7 @@ struct Measurement {
   };
 
   void fixTime();
-
   template <typename R> void set(const Pm<R> &rhs) { pm = rhs; }
-
   [[nodiscard]] const char *getType() const;
-
   bool formatMsg(char *buf, size_t size) const;
 };

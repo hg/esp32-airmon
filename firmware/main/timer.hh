@@ -10,7 +10,7 @@ public:
   Timer() : start{xTaskGetTickCount()} {}
 
   // returns passed time in seconds
-  TickType_t seconds() {
+  TickType_t seconds() const {
     const TickType_t now = xTaskGetTickCount();
 
     const TickType_t passed =

@@ -19,7 +19,7 @@ struct TempSensor {
   void start(Queue<Measurement> &msQueue);
 
 private:
-  [[noreturn]] static void collectionTask(void *arg);
+  [[noreturn]] static void taskCollection(void *arg);
 
   void runMeasurements(const DS18B20_Info &device);
 };

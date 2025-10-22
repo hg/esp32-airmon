@@ -33,6 +33,15 @@ struct Response {
   void swapBytes();
 } __attribute__((packed));
 
+struct ResponseSum {
+  Pm<uint32_t> pm;
+  uint32_t count;
+
+  void add(const Response &resp);
+  void avg();
+  void reset();
+};
+
 struct Station {
   const char *name;
   const uart_port_t port;
@@ -40,32 +49,18 @@ struct Station {
   const gpio_num_t txPin;
   Queue<Measurement> *queue;
 
-  int readResponse(Response &resp, TickType_t wait);
-
-  int writeCommand(const cmd::Command &cmd);
-
-  esp_err_t flushInput();
-
-  esp_err_t flushOutput(TickType_t wait);
-
+  int readResponse(Response &resp, TickType_t wait) const;
+  int writeCommand(const cmd::Command &cmd) const;
+  esp_err_t flushInput() const;
+  esp_err_t flushOutput(TickType_t wait) const;
   void start(Queue<Measurement> &msQueue);
 
 private:
-  static constexpr size_t pmsFrameLen =
+  static constexpr uint16_t pmsFrameLen =
       sizeof(Response) - sizeof(Response::magic) - sizeof(Response::frameLen);
 
-  [[noreturn]] static void collectionTask(void *arg);
-};
-
-struct ResponseSum {
-  Pm<uint32_t> pm;
-  uint32_t count;
-
-  void addMeasurement(const Response &resp);
-
-  void calcAvg();
-
-  void reset();
+  [[noreturn]] static void taskCollection(void *arg);
+  bool collectionIter(ResponseSum &avg) const;
 };
 
 } // namespace pms

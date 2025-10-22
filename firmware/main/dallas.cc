@@ -63,7 +63,7 @@ void TempSensor::runMeasurements(const DS18B20_Info &device) {
   }
 }
 
-[[noreturn]] void TempSensor::collectionTask(void *const arg) {
+[[noreturn]] void TempSensor::taskCollection(void *const arg) {
   TempSensor &sensor = *reinterpret_cast<TempSensor *>(arg);
 
   ESP_LOGI(logTag, "starting temp collection task for %s", sensor.name);
@@ -90,9 +90,7 @@ void TempSensor::runMeasurements(const DS18B20_Info &device) {
 
 void TempSensor::start(Queue<Measurement> &msQueue) {
   queue = &msQueue;
-  char buf[24];
-  snprintf(buf, sizeof(buf), "temp_%s", name);
-  xTaskCreate(collectionTask, buf, KiB(2), this, 2, nullptr);
+  xTaskCreate(taskCollection, "meas_temp", KiB(4), this, 2, nullptr);
 }
 
 } // namespace ds

@@ -46,7 +46,7 @@ struct Sensor {
   void start(Queue<Measurement> &msQueue);
 
 private:
-  [[noreturn]] static void collectionTask(void *arg);
+  [[noreturn]] static void taskCollection(void *arg);
 
   [[nodiscard]] std::optional<Co2Level> readCo2();
 

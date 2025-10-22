@@ -39,17 +39,53 @@ uint16_t Response::calcChecksum() const {
 }
 
 void Response::swapBytes() {
-  std::transform(&frameLen, (&checksum) + 1, &frameLen, &lwip_htons);
+  std::transform(&frameLen, &checksum + 1, &frameLen, &lwip_htons);
 }
 
-[[noreturn]] void Station::collectionTask(void *const arg) {
+bool Station::collectionIter(ResponseSum &avg) const {
+  Response res{};
+
+  int received = readResponse(res, secToTicks(5));
+
+  if (received != sizeof(res)) {
+    if (received == -1) {
+      ESP_LOGE(logTag, "uart receive failed");
+    }
+    return false;
+  }
+
+  if (res.magic != cmd::magic) {
+    ESP_LOGW(logTag, "invalid magic number 0x%x", res.magic);
+    return false;
+  }
+
+  res.swapBytes();
+
+  if (res.frameLen != pmsFrameLen) {
+    ESP_LOGW(logTag, "invalid frame length %d", res.frameLen);
+    return false;
+  }
+
+  uint16_t checksum = res.calcChecksum();
+
+  if (checksum != res.checksum) {
+    ESP_LOGW(logTag, "checksum 0x%x, want 0x%x", res.checksum, checksum);
+    return false;
+  }
+
+  avg.add(res);
+
+  ESP_LOGI(logTag, "cur PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm.atm.pm1Mcg,
+           res.pm.atm.pm2Mcg, res.pm.atm.pm10Mcg);
+
+  return true;
+}
+
+[[noreturn]] void Station::taskCollection(void *const arg) {
   Station &station{*reinterpret_cast<Station *>(arg)};
 
-  Response res{};
-  ResponseSum sum{};
+  ResponseSum avg{};
   Measurement ms{.type = MeasurementType::PARTICULATES, .sensor = station.name};
-
-  TickType_t lastWake = xTaskGetTickCount();
 
   while (true) {
     int sent = station.writeCommand(cmd::cmdWakeup);
@@ -60,120 +96,54 @@ void Response::swapBytes() {
       continue;
     }
 
-    // wait for the station to wake up and send us the first command
-    station.flushInput();
-    station.readResponse(res, portMAX_DELAY);
+    int warmup = 0;
 
-    // discard first measurements as recommended by the manual
-    vTaskDelay(secToTicks(30));
-    station.flushInput();
+    while (true) {
+      avg.reset();
 
-    // if network is down, queue average measurements to conserve RAM
-    const bool sendEach = appState->check(AppState::STATE_NET_CONNECTED);
-    if (!sendEach) {
-      sum.reset();
-    }
-
-    Timer execTime;
-    bool periodOverflow = false;
-
-    for (int successful = 0; successful < CONFIG_PARTICULATE_MEASUREMENTS;) {
-      if (execTime.seconds() >= CONFIG_PARTICULATE_PERIOD_SECONDS) {
-        ESP_LOGE(logTag, "PM measurement took too much time");
-        periodOverflow = true;
-        break;
-      }
-
-      const int received = station.readResponse(res, secToTicks(5));
-
-      if (received != sizeof(res)) {
-        if (received == -1) {
-          ESP_LOGE(logTag, "uart receive failed");
+      for (int iter = 0; iter < 20; ++iter) {
+        if (!station.collectionIter(avg)) {
+          station.flushInput();
         }
-        station.flushInput();
+      }
+
+      if (warmup < 2) {
+        warmup++;
+        ESP_LOGI(logTag, "warmup %d/2 finished", warmup);
         continue;
       }
 
-      if (res.magic != cmd::magic) {
-        ESP_LOGW(logTag, "invalid magic number 0x%x", res.magic);
-        station.flushInput();
+      if (avg.count == 0) {
+        ESP_LOGW(logTag, "no measurements to average out");
         continue;
       }
 
-      res.swapBytes();
+      avg.avg();
 
-      if (res.frameLen != pmsFrameLen) {
-        ESP_LOGW(logTag, "invalid frame length %d", res.frameLen);
-        station.flushInput();
-        continue;
-      }
-
-      const uint16_t checksum = res.calcChecksum();
-      if (checksum != res.checksum) {
-        ESP_LOGW(logTag, "checksum 0x%x, expected 0x%x", res.checksum,
-                 checksum);
-        station.flushInput();
-        continue;
-      }
-
-      if (sendEach) {
-        ms.time = getTimestamp();
-        ms.set(res.pm);
-        if (!station.queue->putRetrying(ms)) {
-          ESP_LOGE(logTag, "could not queue particulate measurement");
-        }
-      } else {
-        sum.addMeasurement(res);
-      }
-
-      ESP_LOGI(logTag, "read PM: 1=%dµg, 2.5=%dµg, 10=%dµg", res.pm.atm.pm1Mcg,
-               res.pm.atm.pm2Mcg, res.pm.atm.pm10Mcg);
-
-      ++successful;
-    }
-
-    ESP_LOGI(logTag, "measurement finished in %u s", execTime.seconds());
-
-    if (!sendEach) {
       ms.time = getTimestamp();
-    }
+      ms.set(avg.pm);
 
-    sent = station.writeCommand(cmd::cmdSleep);
-    if (sent != sizeof(cmd::cmdSleep)) {
-      ESP_LOGE(logTag, "could not send sleep command");
-    }
+      ESP_LOGI(logTag, "avg PM: 1=%uµg, 2.5=%uµg, 10=%uµg", ms.pm.atm.pm1Mcg,
+               ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
 
-    if (periodOverflow) {
-      // measurement period overflow, skip next iteration
-      lastWake = xTaskGetTickCount();
-    } else {
-      if (!sendEach) {
-        sum.calcAvg();
-        ms.set(sum.pm);
-        ESP_LOGI(logTag, "avg PM: 1=%u, 2.5=%u, 10=%u", ms.pm.atm.pm1Mcg,
-                 ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg);
-
-        if (!station.queue->putRetrying(ms)) {
-          ESP_LOGE(logTag, "could not queue averaged PM measurement");
-        }
+      if (!station.queue->putRetrying(ms)) {
+        ESP_LOGE(logTag, "could not queue averaged PM measurement");
       }
     }
-
-    vTaskDelayUntil(&lastWake, secToTicks(appSettings.period.pm));
   }
 }
 
-int Station::readResponse(Response &resp, const TickType_t wait) {
+int Station::readResponse(Response &resp, const TickType_t wait) const {
   return uart_read_bytes(port, &resp, sizeof(resp), wait);
 }
 
-int Station::writeCommand(const cmd::Command &cmd) {
+int Station::writeCommand(const cmd::Command &cmd) const {
   return uart_write_bytes(port, &cmd, sizeof(cmd));
 }
 
-esp_err_t Station::flushInput() { return uart_flush_input(port); }
+esp_err_t Station::flushInput() const { return uart_flush_input(port); }
 
-esp_err_t Station::flushOutput(const TickType_t wait) {
+esp_err_t Station::flushOutput(const TickType_t wait) const {
   return uart_wait_tx_done(port, wait);
 }
 
@@ -197,20 +167,17 @@ void Station::start(Queue<Measurement> &msQueue) {
   ESP_ERROR_CHECK(
       uart_set_pin(port, txPin, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
-  char buf[32];
-  snprintf(buf, sizeof(buf), "pm_%s", name);
-
-  xTaskCreate(collectionTask, buf, KiB(2), this, 4, nullptr);
+  xTaskCreate(taskCollection, "meas_pm", KiB(4), this, 4, nullptr);
 }
 
-void ResponseSum::addMeasurement(const Response &resp) {
+void ResponseSum::add(const Response &resp) {
   pm += resp.pm;
   ++count;
 }
 
 void ResponseSum::reset() { memset(this, 0, sizeof(*this)); }
 
-void ResponseSum::calcAvg() {
+void ResponseSum::avg() {
   if (count > 0) {
     pm /= count;
     count = 0;
