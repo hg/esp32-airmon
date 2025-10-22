@@ -1,6 +1,5 @@
 #include "dallas.hh"
 #include "common.hh"
-#include "settings.hh"
 #include "time.hh"
 
 namespace ds {
@@ -59,7 +58,7 @@ void TempSensor::runMeasurements(const DS18B20_Info &device) const {
       ESP_LOGW(logTag, "measurement failed in %s, err 0x%x", name, err);
     }
 
-    vTaskDelayUntil(&lastWakeTime, appSettings.period.temp);
+    vTaskDelayUntil(&lastWakeTime, CONFIG_TEMPERATURE_PERIOD_SECONDS);
   }
 }
 

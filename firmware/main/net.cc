@@ -1,8 +1,6 @@
 #include "net.hh"
 #include "common.hh"
-#include "settings.hh"
 #include "state.hh"
-#include "utils.hh"
 #include <esp_event.h>
 #include <esp_tls.h>
 #include <esp_wifi.h>
@@ -97,10 +95,10 @@ void initWifi() {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
-  strncpy(reinterpret_cast<char *>(wf_conf.sta.ssid),
-          appSettings.wifi.ssid.c_str(), sizeof(wf_conf.sta.ssid));
-  strncpy(reinterpret_cast<char *>(wf_conf.sta.password),
-          appSettings.wifi.pass.c_str(), sizeof(wf_conf.sta.password));
+  strncpy(reinterpret_cast<char *>(wf_conf.sta.ssid), CONFIG_WIFI_SSID,
+          sizeof(wf_conf.sta.ssid));
+  strncpy(reinterpret_cast<char *>(wf_conf.sta.password), CONFIG_WIFI_PASSWORD,
+          sizeof(wf_conf.sta.password));
 #pragma GCC diagnostic pop
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));

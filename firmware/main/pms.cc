@@ -1,8 +1,6 @@
 #include "pms.hh"
 #include "common.hh"
 #include "measurement.hh"
-#include "settings.hh"
-#include "state.hh"
 #include "time.hh"
 #include "timer.hh"
 #include "utils.hh"

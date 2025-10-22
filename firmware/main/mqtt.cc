@@ -1,6 +1,5 @@
 #include "mqtt.hh"
 #include "common.hh"
-#include "settings.hh"
 #include "utils.hh"
 #include <esp_log.h>
 
@@ -12,8 +11,6 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
   switch (evt->event_id) {
   case MQTT_EVENT_CONNECTED:
     client.setState(MqttState::READY);
-    client.subscribe("cmd/*", 2);
-    client.subscribe(client.cmdTopic, 2);
     ESP_LOGI(logTag, "mqtt connected");
     break;
 
@@ -32,7 +29,6 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
     Message *const msg = new Message{
         .id = evt->msg_id,
         .topic = std::move(topic),
-        .respTopic = topic == "cmd/*" ? "response/*" : client.respTopic,
         .data = std::string{evt->data, static_cast<unsigned>(evt->data_len)},
     };
 
@@ -57,9 +53,7 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
 
 Client::Client(std::string_view brokerUri, std::string_view caCert,
                std::string_view username, std::string_view password)
-    : cmdTopic{std::string{"cmd/"}.append(username)},
-      respTopic{std::string{"response/"}.append(username)}, cert{caCert},
-      event{xEventGroupCreate()} {
+    : cert{caCert}, event{xEventGroupCreate()} {
 
   const esp_mqtt_client_config_t conf{
       .event_handle = handleEvent,
