@@ -1,4 +1,4 @@
-#include "state.hh"
+#include "state.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 

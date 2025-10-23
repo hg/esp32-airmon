@@ -1,10 +1,10 @@
-#include "co2.hh"
-#include "crc16.hh"
+#include "co2.h"
 #include "driver/uart.h"
 #include "esp_err.h"
-#include "measurement.hh"
+#include "measurement.h"
 #include <cstdio>
 #include <esp_log.h>
+#include "crc16.h"
 #include <sys/cdefs.h>
 
 static const char *const kTag = "co2";
@@ -16,6 +16,9 @@ static Command initCmd(Command &&cmd) {
   cmd.crc = crc16(bytes, sizeof(cmd) - sizeof(cmd.crc));
   return cmd;
 }
+
+static constexpr Address kAddressAny = 0xfe;
+static constexpr FunctionCode kReadInputRegisters = 0x04;
 
 static const Command kCmdReadCo2Level = initCmd({
     .address = kAddressAny,
@@ -29,35 +32,31 @@ static const Command kCmdReadCo2Level = initCmd({
 namespace co2 {
 
 [[noreturn]] void Sensor::taskCollection(void *const arg) {
-  Sensor &sensor{*reinterpret_cast<Sensor *>(arg)};
+  Sensor &sensor{*static_cast<Sensor *>(arg)};
   Measurement ms{.type = MeasurementType::CO2, .sensor = sensor.name};
 
   TickType_t lastWake = xTaskGetTickCount();
 
   while (true) {
-    const auto written = sensor.writeCommand(cmd::kCmdReadCo2Level);
+    int written = sensor.writeCommand(cmd::kCmdReadCo2Level);
 
     if (written != sizeof(cmd::kCmdReadCo2Level)) {
       ESP_LOGE(kTag, "could not send command (written %d bytes)", written);
-      vTaskDelay(secToTicks(5));
+      vTaskDelay(seconds(5));
       sensor.flushInput();
-      sensor.flushOutput(secToTicks(1));
+      sensor.flushOutput(seconds(1));
       continue;
     }
 
-    const std::optional<Co2Level> co2 = sensor.readCo2();
-
-    if (co2.has_value()) {
-      ms.updateTime();
-      ms.co2 = co2.value();
-      sensor.queue->put(ms, portMAX_DELAY);
-
+    if (Co2Level co2 = sensor.readCo2(); co2 != Co2LevelNone) {
+      ms.setCO2(co2);
+      sensor.queue->put(ms, seconds(10));
       ESP_LOGI(kTag, "CO2 concentration: %d PPM", ms.co2);
     } else {
       ESP_LOGE(kTag, "could not receive CO2 data from sensor");
     }
 
-    vTaskDelayUntil(&lastWake, secToTicks(4));
+    vTaskDelayUntil(&lastWake, seconds(4));
   }
 }
 
@@ -65,7 +64,9 @@ int Sensor::writeCommand(const cmd::Command &cmd) const {
   return uart_write_bytes(port, &cmd, sizeof(cmd));
 }
 
-esp_err_t Sensor::flushInput() const { return uart_flush_input(port); }
+esp_err_t Sensor::flushInput() const {
+  return uart_flush_input(port);
+}
 
 esp_err_t Sensor::flushOutput(const TickType_t wait) const {
   return uart_wait_tx_done(port, wait);
@@ -95,33 +96,31 @@ void Sensor::start(Queue<Measurement> &msQueue) {
   xTaskCreate(taskCollection, buf, KiB(4), this, 4, nullptr);
 }
 
-[[nodiscard]] std::optional<Co2Level> Sensor::readCo2() const {
+Co2Level Sensor::readCo2() const {
   cmd::Co2Response response{};
 
-  const auto read =
-      uart_read_bytes(port, &response, sizeof(response), portMAX_DELAY);
+  const int read = uart_read_bytes(port, &response, sizeof(response),
+                                   portMAX_DELAY);
 
   if (read != sizeof(cmd::Co2Response)) {
     ESP_LOGE(kTag, "invalid response length %d bytes", read);
-    return std::nullopt;
+    return Co2LevelNone;
   }
 
-  const uint16_t crc = crc16(reinterpret_cast<const uint8_t *>(&response),
-                             sizeof(response) - sizeof(response.crc));
+  uint16_t crc = crc16(reinterpret_cast<const uint8_t *>(&response),
+                       sizeof(response) - sizeof(response.crc));
 
   if (crc != response.crc) {
     ESP_LOGE(kTag, "invalid CRC 0x%x (expected 0x%x)", crc, response.crc);
-    return std::nullopt;
+    return Co2LevelNone;
   }
 
   if (response.co2 <= 0) {
     ESP_LOGE(kTag, "sensor returned zero or negative CO2 (%d)", response.co2);
-    return std::nullopt;
+    return Co2LevelNone;
   }
 
-  const auto level = static_cast<Co2Level>(PP_NTOHS(response.co2));
-
-  return std::make_optional(level);
+  return PP_NTOHS(response.co2);
 }
 
 } // namespace co2

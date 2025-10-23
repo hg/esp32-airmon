@@ -1,7 +1,7 @@
-#include "dallas.hh"
-#include "common.hh"
+#include "dallas.h"
+#include "common.h"
 #include "ds18b20.h"
-#include "time.hh"
+#include "chrono.h"
 #include "onewire_bus.h"
 
 namespace ds {
@@ -56,13 +56,15 @@ static void process(TempSensor &ts) {
   };
 
   while (true) {
-    vTaskDelay(secToTicks(15));
+    float temp = 0;
+
+    vTaskDelay(seconds(15));
 
     ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
-    ESP_ERROR_CHECK(ds18b20_get_temperature(sensor, &ms.temp));
-    ESP_LOGI(logTag, "temperature: %.2fC", ms.temp);
+    ESP_ERROR_CHECK(ds18b20_get_temperature(sensor, &temp));
+    ESP_LOGI(logTag, "temperature: %.2fC", temp);
 
-    ms.updateTime();
+    ms.setTemp(temp);
 
     if (!ts.queue->putRetrying(ms)) {
       ESP_LOGE(logTag, "could not put temp measurement into queue");
@@ -77,7 +79,7 @@ static void taskCollection(void *arg) {
   ESP_LOGI(logTag, "starting temp collection task for %s", sensor.name);
 
   while (true) {
-    vTaskDelay(secToTicks(2));
+    vTaskDelay(seconds(2));
     process(sensor);
     ESP_LOGE(logTag, "sensor %s failed, restarting", sensor.name);
   }

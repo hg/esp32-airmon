@@ -1,7 +1,7 @@
-#include "mqtt.hh"
-#include "common.hh"
+#include "mqtt.h"
+#include "common.h"
 #include "esp_tls.h"
-#include "utils.hh"
+#include "utils.h"
 
 #include <esp_log.h>
 
@@ -11,7 +11,7 @@ void Client::handleEvent(void *event_handler_arg,
                          esp_event_base_t event_base,
                          int32_t event_id,
                          void *event_data) {
-  Client &client = *reinterpret_cast<Client *>(event_handler_arg);
+  Client &client = *static_cast<Client *>(event_handler_arg);
   auto evt = static_cast<esp_mqtt_event_handle_t>(event_data);
 
   switch (event_id) {
@@ -30,15 +30,7 @@ void Client::handleEvent(void *event_handler_arg,
     break;
 
   case MQTT_EVENT_DATA: {
-    ESP_LOGI(logTag, "mqtt message received (id %d)", evt->msg_id);
-    std::string topic{evt->topic, static_cast<unsigned>(evt->topic_len)};
-    Message *const msg = new Message{
-        .id = evt->msg_id,
-        .topic = std::move(topic),
-        .data = std::string{evt->data, static_cast<unsigned>(evt->data_len)},
-    };
-
-    client.msgQueue.put(msg);
+    ESP_LOGI(logTag, "mqtt message ignored (id %d)", evt->msg_id);
     break;
   }
 
@@ -109,17 +101,20 @@ void Client::waitReady() const {
                       false, portMAX_DELAY);
 }
 
-bool Client::send(std::string_view topic, std::string_view data) const {
-  for (int result = -1; result < 0;) {
-    result = esp_mqtt_client_publish(handle, topic.data(), data.data(),
-                                     data.length(), 1, 1);
-    if (result < 0) {
+bool Client::send(const std::string_view topic,
+                  const std::string_view data) const {
+  for (int i = 0; i < 10; ++i) {
+    int msgId = esp_mqtt_client_publish(handle, topic.data(), data.data(),
+                                        data.length(), 1, 1);
+    if (msgId < 0) {
       ESP_LOGI(logTag, "mqtt publish failed, retrying");
-      vTaskDelay(secToTicks(5));
+      vTaskDelay(seconds(1));
+    } else {
+      return true;
     }
   }
 
-  return true;
+  return false;
 }
 
 void Client::setState(const MqttState bits) const {
@@ -129,11 +124,5 @@ void Client::setState(const MqttState bits) const {
 void Client::clearState(const MqttState bits) const {
   xEventGroupClearBits(event, static_cast<EventBits_t>(bits));
 }
-
-bool Client::subscribe(std::string_view topic, int qos) const {
-  return esp_mqtt_client_subscribe(handle, topic.data(), qos) != ESP_OK;
-}
-
-Message Client::receive() { return *msgQueue.take(); }
 
 } // namespace mqtt

@@ -1,14 +1,26 @@
-#include "time.hh"
-#include "common.hh"
-#include "state.hh"
-#include "utils.hh"
+#include "chrono.h"
+#include "common.h"
+#include "state.h"
+#include "utils.h"
 #include <esp_log.h>
 #include <esp_sntp.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-volatile time_t bootTimestamp = 0;
+// UNIX time when the system was booted
+static volatile time_t bootTimestamp = 0;
+
+static constexpr bool isValidTimestamp(const time_t ts) {
+  return ts >= 1577836800; // 2020-01-01 UTC
+}
+
+// fixes time if it was assigned before SNTP time was available
+void fixInvalidTime(time_t &tm) {
+  if (!isValidTimestamp(tm)) {
+    tm += bootTimestamp;
+  }
+}
 
 time_t getTimestamp() {
   if (bootTimestamp > 0) {
@@ -18,7 +30,7 @@ time_t getTimestamp() {
   return esp_timer_get_time() / usPerSec;
 }
 
-static void onTimeUpdated([[maybe_unused]] timeval *const tm) {
+static void onTimeUpdated(timeval *const tm) {
   if (bootTimestamp == 0) {
     bootTimestamp = time(nullptr);
     state->set(AppState::STATE_TIME_VALID);
@@ -26,7 +38,7 @@ static void onTimeUpdated([[maybe_unused]] timeval *const tm) {
   ESP_LOGI(logTag, "sntp time update finished");
 }
 
-static void taskSntpUpdate([[maybe_unused]] void *const arg) {
+static void taskSntpUpdate(void *const arg) {
   state->wait(AppState::STATE_NET_CONNECTED);
 
   esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);

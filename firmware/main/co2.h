@@ -1,20 +1,19 @@
 #pragma once
 
-#include "measurement.hh"
-#include "queue.hh"
+#include "measurement.h"
+#include "queue.h"
 #include <optional>
 
 namespace co2 {
 
 using Co2Level = uint16_t;
 
+static constexpr Co2Level Co2LevelNone = 0;
+
 namespace cmd {
 
 using Address = uint8_t;
 using FunctionCode = uint8_t;
-
-static constexpr Address kAddressAny = 0xfe;
-static constexpr FunctionCode kReadInputRegisters = 0x04;
 
 struct Command {
   Address address;
@@ -47,7 +46,7 @@ struct Sensor {
 
 private:
   [[noreturn]] static void taskCollection(void *arg);
-  [[nodiscard]] std::optional<Co2Level> readCo2() const;
+  Co2Level readCo2() const;
 
   int writeCommand(const cmd::Command &cmd) const;
   esp_err_t flushInput() const;

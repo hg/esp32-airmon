@@ -1,12 +1,10 @@
 #pragma once
 
-#include "queue.hh"
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <mqtt_client.h>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace mqtt {
 
@@ -31,8 +29,6 @@ public:
 
   void waitReady() const;
   bool send(std::string_view topic, std::string_view data) const;
-  [[nodiscard]] Message receive();
-  bool subscribe(std::string_view topic, int qos) const;
 
 private:
   void clearState(MqttState bits) const;
@@ -41,7 +37,6 @@ private:
                           esp_event_base_t event_bse,
                           int32_t event_id,
                           void *event_data);
-  Queue<Message *> msgQueue{10};
   esp_mqtt_client_handle_t handle;
   EventGroupHandle_t event;
 };

@@ -1,4 +1,4 @@
-#include "timer.hh"
+#include "timer.h"
 #include <chrono>
 #include <limits>
 

@@ -1,14 +1,7 @@
-#include "measurement.hh"
-#include "common.hh"
-#include "time.hh"
+#include "measurement.h"
+#include "common.h"
+#include "chrono.h"
 #include <esp_log.h>
-
-// fixes time if it was assigned before SNTP data became available
-void Measurement::fixTime() {
-  if (!isValidTimestamp(time)) {
-    time += bootTimestamp;
-  }
-}
 
 const char *Measurement::getType() const {
   switch (type) {
@@ -27,7 +20,9 @@ const char *Measurement::getType() const {
   }
 }
 
-bool Measurement::formatMsg(char *const buf, const size_t size) const {
+bool Measurement::format(char *const buf, const size_t size) {
+  fixInvalidTime(time);
+
   switch (type) {
   case MeasurementType::TEMPERATURE: {
     constexpr auto tpl = R"({"dev":"%s","time":%lld,"sens":"%s","temp":%f})";
@@ -60,4 +55,16 @@ bool Measurement::formatMsg(char *const buf, const size_t size) const {
 
 void Measurement::updateTime() {
   time = getTimestamp();
+}
+
+void Measurement::setTemp(float value) {
+  updateTime();
+  temp = value;
+  type = MeasurementType::TEMPERATURE;
+}
+
+void Measurement::setCO2(uint16_t value) {
+  updateTime();
+  co2 = value;
+  type = MeasurementType::CO2;
 }

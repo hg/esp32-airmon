@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pm.hh"
-#include "queue.hh"
+#include "pm.h"
+#include "queue.h"
 #include <driver/gpio.h>
 #include <driver/uart.h>
 #include <lwip/def.h>
@@ -27,9 +27,6 @@ struct Response {
   Pm<uint16_t> pm;
   uint16_t reserved;
   uint16_t checksum;
-
-  [[nodiscard]] uint16_t calcChecksum() const;
-  void swapBytes();
 } __attribute__((packed));
 
 struct ResponseSum {
@@ -52,13 +49,6 @@ struct Station {
   esp_err_t flushInput() const;
   esp_err_t flushOutput(TickType_t wait) const;
   void start(Queue<Measurement> &msQueue);
-
-private:
-  static constexpr uint16_t pmsFrameLen =
-      sizeof(Response) - sizeof(Response::magic) - sizeof(Response::frameLen);
-
-  [[noreturn]] static void taskCollection(void *arg);
-  bool collectionIter(ResponseSum &avg) const;
 };
 
 } // namespace pms

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "measurement.hh"
-#include "queue.hh"
+#include "measurement.h"
+#include "queue.h"
 #include <driver/gpio.h>
 
 namespace ds {

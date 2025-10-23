@@ -1,14 +1,13 @@
-#include "co2.hh"
-#include "common.hh"
-#include "dallas.hh"
-#include "device_config.hh"
-#include "mqtt.hh"
-#include "net.hh"
-#include "pms.hh"
-#include "queue.hh"
-#include "state.hh"
-#include "time.hh"
-#include <driver/periph_ctrl.h>
+#include "co2.h"
+#include "common.h"
+#include "dallas.h"
+#include "config.h"
+#include "mqtt.h"
+#include "net.h"
+#include "pms.h"
+#include "queue.h"
+#include "state.h"
+#include "chrono.h"
 #include <esp_log.h>
 
 State *state = nullptr;
@@ -21,17 +20,8 @@ static void initLog() {
 #endif
 }
 
-static void restartPeripheral(const periph_module_t mod) {
-  periph_module_disable(mod);
-  periph_module_enable(mod);
-}
-
 static void initApp() {
   state = new State;
-
-  // reset peripherals in case of prior crash
-  restartPeripheral(PERIPH_RMT_MODULE);
-  restartPeripheral(PERIPH_UART0_MODULE);
 
   initLog();
   initWifi();
@@ -66,8 +56,7 @@ extern "C" [[noreturn]] void app_main() {
     client.waitReady();
 
     Measurement ms = queue.take();
-    ms.fixTime();
-    ms.formatMsg(buf, sizeof(buf));
+    ms.format(buf, sizeof(buf));
 
     if (!client.send(ms.getType(), buf)) {
       ESP_LOGE(logTag, "measurement send failed");

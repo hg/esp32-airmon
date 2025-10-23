@@ -2,7 +2,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
-#include "utils.hh"
+#include "utils.h"
 
 template <typename T> class Queue {
 public:
@@ -30,7 +30,7 @@ public:
         T drop;
         takeInto(drop, 0);
       }
-      if (put(item, secToTicks(1))) {
+      if (put(item, seconds(1))) {
         return true;
       }
     }

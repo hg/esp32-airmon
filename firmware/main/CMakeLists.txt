@@ -1,6 +1,24 @@
+set(src app_main.cpp
+        time.cpp
+        mqtt.cpp
+        state.cpp
+        pms.cpp
+        measurement.cpp
+        dallas.cpp
+        net.cpp
+        co2.cpp
+        crc16.cpp
+        timer.cpp)
+
+set(mod esp_driver_gpio
+        esp_driver_uart
+        esp_wifi
+        mqtt
+        onewire_bus)
+
 idf_component_register(
-        SRCS app_main.cc time.cc mqtt.cc state.cc pms.cc measurement.cc dallas.cc net.cc
-             co2.cc crc16.cc timer.cc
+        SRCS ${src}
+        PRIV_REQUIRES ${mod}
         INCLUDE_DIRS "."
 )
 

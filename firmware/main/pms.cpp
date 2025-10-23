@@ -1,9 +1,8 @@
-#include "pms.hh"
-#include "common.hh"
-#include "measurement.hh"
-#include "time.hh"
-#include "timer.hh"
-#include "utils.hh"
+#include "pms.h"
+#include "common.h"
+#include "measurement.h"
+#include "timer.h"
+#include "utils.h"
 #include <algorithm>
 #include <cstring>
 #include <numeric>
@@ -13,6 +12,9 @@ namespace pms {
 namespace cmd {
 
 static constexpr uint16_t magic = 0x4d42;
+
+static constexpr uint16_t frameLen =
+    sizeof(Response) - sizeof(Response::magic) - sizeof(Response::frameLen);
 
 static constexpr Command initCmd(uint8_t cmd, uint8_t hi, uint8_t lo) {
   return Command{
@@ -31,19 +33,19 @@ static constexpr Command cmdWakeup = initCmd(0xe4, 0x00, 0x01);
 
 } // namespace cmd
 
-uint16_t Response::calcChecksum() const {
-  return std::accumulate(reinterpret_cast<const uint8_t *>(&magic),
-                         reinterpret_cast<const uint8_t *>(&checksum), 0);
+static uint16_t calcChecksum(Response &re) {
+  return std::accumulate(reinterpret_cast<const uint8_t *>(&re.magic),
+                         reinterpret_cast<const uint8_t *>(&re.checksum), 0);
 }
 
-void Response::swapBytes() {
-  std::transform(&frameLen, &checksum + 1, &frameLen, &lwip_htons);
+static void swapBytes(Response &re) {
+  std::transform(&re.frameLen, &re.checksum + 1, &re.frameLen, &lwip_htons);
 }
 
-bool Station::collectionIter(ResponseSum &avg) const {
+static bool collect(Station st, ResponseSum &avg) {
   Response res{};
 
-  int received = readResponse(res, secToTicks(5));
+  int received = st.readResponse(res, seconds(5));
 
   if (received != sizeof(res)) {
     if (received == -1) {
@@ -57,14 +59,14 @@ bool Station::collectionIter(ResponseSum &avg) const {
     return false;
   }
 
-  res.swapBytes();
+  swapBytes(res);
 
-  if (res.frameLen != pmsFrameLen) {
+  if (res.frameLen != cmd::frameLen) {
     ESP_LOGW(logTag, "invalid frame length %d", res.frameLen);
     return false;
   }
 
-  uint16_t checksum = res.calcChecksum();
+  uint16_t checksum = calcChecksum(res);
 
   if (checksum != res.checksum) {
     ESP_LOGW(logTag, "checksum 0x%x, want 0x%x", res.checksum, checksum);
@@ -79,8 +81,9 @@ bool Station::collectionIter(ResponseSum &avg) const {
   return true;
 }
 
-[[noreturn]] void Station::taskCollection(void *const arg) {
-  Station &station{*reinterpret_cast<Station *>(arg)};
+[[noreturn]]
+static void taskCollection(void *const arg) {
+  Station &station{*static_cast<Station *>(arg)};
 
   Measurement ms{.type = MeasurementType::PARTICULATES, .sensor = station.name};
 
@@ -89,18 +92,18 @@ bool Station::collectionIter(ResponseSum &avg) const {
     if (sent != sizeof(cmd::cmdWakeup)) {
       ESP_LOGE(logTag, "could not send wakeup command");
       station.flushOutput(portMAX_DELAY);
-      vTaskDelay(secToTicks(1));
+      vTaskDelay(seconds(1));
       continue;
     }
 
-    int warmup = 0;
+    short warmup = 0;
 
     while (true) {
       Timer tm{};
       ResponseSum avg{};
 
       for (int iter = 0; iter < 20; ++iter) {
-        if (!station.collectionIter(avg)) {
+        if (!collect(station, avg)) {
           station.flushInput();
         }
       }
@@ -118,8 +121,7 @@ bool Station::collectionIter(ResponseSum &avg) const {
 
       avg.avg();
 
-      ms.updateTime();
-      ms.set(avg.pm);
+      ms.setPM(avg.pm);
 
       ESP_LOGI(logTag, "avg PM: 1=%uµg, 2.5=%uµg, 10=%uµg (in %d ms)",
                ms.pm.atm.pm1Mcg, ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg,
@@ -130,6 +132,8 @@ bool Station::collectionIter(ResponseSum &avg) const {
       }
     }
   }
+
+  configASSERT(false);
 }
 
 int Station::readResponse(Response &resp, const TickType_t wait) const {
@@ -140,7 +144,9 @@ int Station::writeCommand(const cmd::Command &cmd) const {
   return uart_write_bytes(port, &cmd, sizeof(cmd));
 }
 
-esp_err_t Station::flushInput() const { return uart_flush_input(port); }
+esp_err_t Station::flushInput() const {
+  return uart_flush_input(port);
+}
 
 esp_err_t Station::flushOutput(const TickType_t wait) const {
   return uart_wait_tx_done(port, wait);
