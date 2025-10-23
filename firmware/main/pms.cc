@@ -118,7 +118,7 @@ bool Station::collectionIter(ResponseSum &avg) const {
 
       avg.avg();
 
-      ms.time = getTimestamp();
+      ms.updateTime();
       ms.set(avg.pm);
 
       ESP_LOGI(logTag, "avg PM: 1=%uµg, 2.5=%uµg, 10=%uµg (in %d ms)",

@@ -49,7 +49,7 @@ namespace co2 {
     const std::optional<Co2Level> co2 = sensor.readCo2();
 
     if (co2.has_value()) {
-      ms.time = getTimestamp();
+      ms.updateTime();
       ms.co2 = co2.value();
       sensor.queue->put(ms, portMAX_DELAY);
 

@@ -7,10 +7,14 @@
 
 namespace mqtt {
 
-esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
-  Client &client = *reinterpret_cast<Client *>(evt->user_context);
+void Client::handleEvent(void *event_handler_arg,
+                         esp_event_base_t event_base,
+                         int32_t event_id,
+                         void *event_data) {
+  Client &client = *reinterpret_cast<Client *>(event_handler_arg);
+  auto evt = static_cast<esp_mqtt_event_handle_t>(event_data);
 
-  switch (evt->event_id) {
+  switch (event_id) {
   case MQTT_EVENT_CONNECTED:
     client.setState(MqttState::READY);
     ESP_LOGI(logTag, "mqtt connected");
@@ -49,8 +53,6 @@ esp_err_t Client::handleEvent(esp_mqtt_event_handle_t evt) {
   default:
     break;
   }
-
-  return ESP_OK;
 }
 
 // convert hex string to array of bytes and return how many bytes were stored
@@ -71,7 +73,7 @@ static size_t hex_to_bytes(const char *str, uint8_t *buf) {
 }
 
 Client::Client(const char *brokerUri, const char *hint, const char *psk)
-    : event{xEventGroupCreate()} {
+  : event{xEventGroupCreate()} {
 
   uint8_t *buf = new uint8_t[strlen(psk) / 2];
   size_t psk_len = hex_to_bytes(psk, buf);
@@ -83,14 +85,15 @@ Client::Client(const char *brokerUri, const char *hint, const char *psk)
   };
 
   const esp_mqtt_client_config_t conf{
-      .event_handle = handleEvent,
-      .uri = brokerUri,
-      .keepalive = 30,
-      .user_context = this,
-      .psk_hint_key = key,
+      .broker = {
+          .address = {.uri = brokerUri},
+          .verification = {.psk_hint_key = key},
+      },
   };
   handle = esp_mqtt_client_init(&conf);
   configASSERT(handle);
+
+  esp_mqtt_client_register_event(handle, MQTT_EVENT_ANY, handleEvent, this);
 
   ESP_ERROR_CHECK(esp_mqtt_client_start(handle));
 }

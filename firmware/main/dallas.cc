@@ -1,88 +1,84 @@
 #include "dallas.hh"
 #include "common.hh"
+#include "ds18b20.h"
 #include "time.hh"
+#include "onewire_bus.h"
 
 namespace ds {
 
-static std::unique_ptr<DS18B20_Info> findSensor(const OneWireBus &owb) {
-  for (bool found = false; !found;) {
-    OneWireBus_SearchState searchState;
-    const owb_status status = owb_search_first(&owb, &searchState, &found);
+static void process(TempSensor &ts) {
+  onewire_bus_handle_t bus;
+  onewire_bus_config_t bus_config = {
+      .bus_gpio_num = ts.pin,
+      .flags = {.en_pull_up = true},
+  };
+  onewire_bus_rmt_config_t rmt_config = {
+      .max_rx_bytes = 32,
+  };
+  ESP_ERROR_CHECK(onewire_new_bus_rmt(&bus_config, &rmt_config, &bus));
 
-    if (status != OWB_STATUS_OK) {
-      ESP_LOGE(logTag, "owb search failed: %d", status);
-      return nullptr;
-    }
-    if (!found) {
-      ESP_LOGD(logTag, "temp sensor not found, retrying");
-      vTaskDelay(msToTicks(500));
-    }
-  }
+  ds18b20_device_handle_t sensor;
+  onewire_device_iter_handle_t iter = nullptr;
+  onewire_device_t next_onewire_device;
+  esp_err_t search = ESP_OK;
 
-  OneWireBus_ROMCode romCode;
-  const owb_status status = owb_read_rom(&owb, &romCode);
+  // create 1-wire device iterator, which is used for device search
+  ESP_ERROR_CHECK(onewire_new_device_iter(bus, &iter));
 
-  if (status != OWB_STATUS_OK) {
-    ESP_LOGE(logTag, "could not read ROM code: %d", status);
-    return nullptr;
-  }
+  do {
+    search = onewire_device_iter_get_next(iter, &next_onewire_device);
 
-  char romCodeStr[OWB_ROM_CODE_STRING_LENGTH];
-  owb_string_from_rom_code(romCode, romCodeStr, sizeof(romCodeStr));
-  ESP_LOGI(logTag, "found device 0x%s", romCodeStr);
+    if (search == ESP_OK) {
+      ds18b20_config_t ds_cfg = {};
+      onewire_device_address_t address;
 
-  std::unique_ptr<DS18B20_Info> device{ds18b20_malloc()};
+      esp_err_t err = ds18b20_new_device_from_enumeration(
+          &next_onewire_device, &ds_cfg,
+          &sensor);
 
-  ds18b20_init_solo(device.get(), &owb);
-  ds18b20_use_crc(device.get(), true);
-  ds18b20_set_resolution(device.get(), DS18B20_RESOLUTION_12_BIT);
-
-  return device;
-}
-
-void TempSensor::runMeasurements(const DS18B20_Info &device) const {
-  Measurement ms{.type = MeasurementType::TEMPERATURE, .sensor = name};
-  TickType_t lastWakeTime = xTaskGetTickCount();
-
-  for (int errCount = 0; errCount < 4;) {
-    const DS18B20_ERROR err = ds18b20_convert_and_read_temp(&device, &ms.temp);
-
-    if (err == DS18B20_OK) {
-      errCount = 0;
-      ms.time = getTimestamp();
-      if (!queue->putRetrying(ms)) {
-        ESP_LOGE(logTag, "could not put temp measurement into queue");
+      if (err == ESP_OK) {
+        ds18b20_get_device_address(sensor, &address);
+        ESP_LOGI(logTag, "found DS18B20 at %016llX", address);
+        break;
       }
-    } else {
-      ++errCount;
-      ESP_LOGW(logTag, "measurement failed in %s, err 0x%x", name, err);
-    }
 
-    vTaskDelayUntil(&lastWakeTime, CONFIG_TEMPERATURE_PERIOD_SECONDS);
+      ESP_LOGI(logTag, "found unknown device at %016llX",
+               next_onewire_device.address);
+    }
+  } while (search != ESP_ERR_NOT_FOUND);
+
+  ESP_ERROR_CHECK(onewire_del_device_iter(iter));
+  ESP_ERROR_CHECK(ds18b20_set_resolution(sensor, DS18B20_RESOLUTION_12B));
+
+  Measurement ms{
+      .type = MeasurementType::TEMPERATURE,
+      .sensor = ts.name,
+  };
+
+  while (true) {
+    vTaskDelay(secToTicks(15));
+
+    ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
+    ESP_ERROR_CHECK(ds18b20_get_temperature(sensor, &ms.temp));
+    ESP_LOGI(logTag, "temperature: %.2fC", ms.temp);
+
+    ms.updateTime();
+
+    if (!ts.queue->putRetrying(ms)) {
+      ESP_LOGE(logTag, "could not put temp measurement into queue");
+    }
   }
 }
 
-[[noreturn]] void TempSensor::taskCollection(void *const arg) {
-  TempSensor &sensor = *reinterpret_cast<TempSensor *>(arg);
+[[noreturn]]
+static void taskCollection(void *arg) {
+  TempSensor &sensor = *static_cast<TempSensor *>(arg);
 
   ESP_LOGI(logTag, "starting temp collection task for %s", sensor.name);
 
   while (true) {
     vTaskDelay(secToTicks(2));
-
-    owb_rmt_driver_info driver_info{};
-    std::unique_ptr<OneWireBus, decltype(&owb_uninitialize)> owb{
-        owb_rmt_initialize(&driver_info, sensor.pin, sensor.txChan,
-                           sensor.rxChan),
-        owb_uninitialize};
-
-    owb_use_crc(owb.get(), true);
-
-    const std::unique_ptr<DS18B20_Info> device = findSensor(*owb);
-    if (device) {
-      sensor.runMeasurements(*device);
-    }
-
+    process(sensor);
     ESP_LOGE(logTag, "sensor %s failed, restarting", sensor.name);
   }
 }

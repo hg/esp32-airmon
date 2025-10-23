@@ -37,8 +37,10 @@ public:
 private:
   void clearState(MqttState bits) const;
   void setState(MqttState bits) const;
-  static esp_err_t handleEvent(esp_mqtt_event_handle_t evt);
-
+  static void handleEvent(void *event_handler_arg,
+                          esp_event_base_t event_bse,
+                          int32_t event_id,
+                          void *event_data);
   Queue<Message *> msgQueue{10};
   esp_mqtt_client_handle_t handle;
   EventGroupHandle_t event;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <algorithm>
 
 template <typename T> struct Pm {
   struct {

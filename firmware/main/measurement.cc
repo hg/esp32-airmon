@@ -30,14 +30,14 @@ const char *Measurement::getType() const {
 bool Measurement::formatMsg(char *const buf, const size_t size) const {
   switch (type) {
   case MeasurementType::TEMPERATURE: {
-    constexpr auto tpl = R"({"dev":"%s","time":%ld,"sens":"%s","temp":%f})";
+    constexpr auto tpl = R"({"dev":"%s","time":%lld,"sens":"%s","temp":%f})";
     snprintf(buf, size, tpl, CONFIG_DEV_NAME, time, sensor, temp);
     return true;
   }
 
   case MeasurementType::PARTICULATES: {
     constexpr auto tpl =
-        R"({"dev":"%s","time":%ld,"sens":"%s","std":{"pm1":%u,"pm2.5":%u,"pm10":%u},"atm":{"pm1":%u,"pm2.5":%u,"pm10":%u},"cnt":{"pm0.3":%u,"pm0.5":%u,"pm1":%u,"pm2.5":%u,"pm5":%u,"pm10":%u}})";
+        R"({"dev":"%s","time":%lld,"sens":"%s","std":{"pm1":%u,"pm2.5":%u,"pm10":%u},"atm":{"pm1":%u,"pm2.5":%u,"pm10":%u},"cnt":{"pm0.3":%u,"pm0.5":%u,"pm1":%u,"pm2.5":%u,"pm5":%u,"pm10":%u}})";
     snprintf(buf, size, tpl, CONFIG_DEV_NAME, time, sensor, pm.std.pm1Mcg,
              pm.std.pm2Mcg, pm.std.pm10Mcg, pm.atm.pm1Mcg, pm.atm.pm2Mcg,
              pm.atm.pm10Mcg, pm.cnt.pm03Count, pm.cnt.pm05Count,
@@ -47,7 +47,7 @@ bool Measurement::formatMsg(char *const buf, const size_t size) const {
   }
 
   case MeasurementType::CO2: {
-    constexpr auto tpl = R"({"dev":"%s","time":%ld,"sens":"%s","co2":%d})";
+    constexpr auto tpl = R"({"dev":"%s","time":%lld,"sens":"%s","co2":%d})";
     snprintf(buf, size, tpl, CONFIG_DEV_NAME, time, sensor, co2);
     return true;
   }
@@ -56,4 +56,8 @@ bool Measurement::formatMsg(char *const buf, const size_t size) const {
     ESP_LOGE(logTag, "invalid message type %d", static_cast<int>(type));
     return false;
   }
+}
+
+void Measurement::updateTime() {
+  time = getTimestamp();
 }

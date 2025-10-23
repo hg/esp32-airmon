@@ -4,19 +4,18 @@
 #include "utils.hh"
 #include <esp_log.h>
 #include <esp_sntp.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 volatile time_t bootTimestamp = 0;
 
 time_t getTimestamp() {
-  constexpr int64_t usPerSec = 1000 * 1000;
-
   if (bootTimestamp > 0) {
     return time(nullptr);
-  } else {
-    return esp_timer_get_time() / usPerSec;
   }
+  constexpr int64_t usPerSec = 1000 * 1000;
+  return esp_timer_get_time() / usPerSec;
 }
 
 static void onTimeUpdated([[maybe_unused]] timeval *const tm) {
