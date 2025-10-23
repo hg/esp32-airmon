@@ -3,7 +3,6 @@
 #include "driver/uart.h"
 #include "esp_err.h"
 #include "measurement.hh"
-#include "time.hh"
 #include <cstdio>
 #include <esp_log.h>
 #include <sys/cdefs.h>
@@ -83,7 +82,7 @@ void Sensor::start(Queue<Measurement> &msQueue) {
                                .source_clk = UART_SCLK_APB};
 
   constexpr size_t rxBuf = sizeof(cmd::Co2Response) * 24;
-  static_assert(rxBuf >= UART_FIFO_LEN);
+  assert(rxBuf >= UART_HW_FIFO_LEN(this.port));
 
   ESP_ERROR_CHECK(uart_driver_install(port, rxBuf, 0, 0, nullptr, 0));
   ESP_ERROR_CHECK(uart_param_config(port, &conf));

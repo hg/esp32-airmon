@@ -159,7 +159,7 @@ void Station::start(Queue<Measurement> &msQueue) {
   };
 
   constexpr size_t rxBuf = sizeof(Response) * 10;
-  static_assert(rxBuf >= UART_FIFO_LEN);
+  assert(rxBuf >= UART_HW_FIFO_LEN(this.port));
 
   ESP_ERROR_CHECK(uart_driver_install(port, rxBuf, 0, 0, nullptr, 0));
   ESP_ERROR_CHECK(uart_param_config(port, &conf));

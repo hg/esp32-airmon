@@ -29,10 +29,10 @@ static void onTimeUpdated([[maybe_unused]] timeval *const tm) {
 static void taskSntpUpdate([[maybe_unused]] void *const arg) {
   state->wait(AppState::STATE_NET_CONNECTED);
 
-  sntp_setoperatingmode(SNTP_OPMODE_POLL);
-  sntp_setservername(0, "pool.ntp.org");
+  esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+  esp_sntp_setservername(0, "pool.ntp.org");
   sntp_set_time_sync_notification_cb(onTimeUpdated);
-  sntp_init();
+  esp_sntp_init();
 
   ESP_LOGI(logTag, "sntp time update started");
 
