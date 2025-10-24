@@ -5,22 +5,22 @@
 #include "pms.h"
 #include <driver/gpio.h>
 
-static co2::Sensor co2Sensors[] = {};
+static co2_sensor co2_sensors[] = {};
 
-static ds::TempSensor tempSensors[] = {
+static temp_sensor temp_sensors[] = {
     {
         .name = "room",
         .pin = GPIO_NUM_5,
-        .queue = nullptr,
+        .queue = NULL,
     },
 };
 
-static pms::Station pmsStations[] = {
+static pm_sensor pm_sensors[] = {
     {
         .name = "room",
         .port = UART_NUM_1,
-        .rxPin = GPIO_NUM_25,
-        .txPin = GPIO_NUM_27,
-        .queue = nullptr,
+        .rx = GPIO_NUM_25,
+        .tx = GPIO_NUM_27,
+        .queue = NULL,
     },
 };

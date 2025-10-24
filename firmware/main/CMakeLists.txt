@@ -1,14 +1,15 @@
-set(src app_main.cpp
-        time.cpp
-        mqtt.cpp
-        state.cpp
-        pms.cpp
-        measurement.cpp
-        dallas.cpp
-        net.cpp
-        co2.cpp
-        crc16.cpp
-        timer.cpp)
+set(src app_main.c
+        time.c
+        mqtt.c
+        state.c
+        pms.c
+        measurement.c
+        dallas.c
+        net.c
+        co2.c
+        crc16.c
+        timer.c
+        queue.c)
 
 set(mod esp_driver_gpio
         esp_driver_uart
@@ -22,5 +23,5 @@ idf_component_register(
         INCLUDE_DIRS "."
 )
 
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers -std=gnu++17)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 

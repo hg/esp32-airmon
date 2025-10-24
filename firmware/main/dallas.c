@@ -1,15 +1,15 @@
 #include "dallas.h"
 #include "common.h"
 #include "ds18b20.h"
-#include "chrono.h"
 #include "onewire_bus.h"
+#include "utils.h"
 
-namespace ds {
+static const char *TAG = "air/temp";
 
-static void process(TempSensor &ts) {
+static void process(temp_sensor *ts) {
   onewire_bus_handle_t bus;
   onewire_bus_config_t bus_config = {
-      .bus_gpio_num = ts.pin,
+      .bus_gpio_num = ts->pin,
       .flags = {.en_pull_up = true},
   };
   onewire_bus_rmt_config_t rmt_config = {
@@ -18,7 +18,7 @@ static void process(TempSensor &ts) {
   ESP_ERROR_CHECK(onewire_new_bus_rmt(&bus_config, &rmt_config, &bus));
 
   ds18b20_device_handle_t sensor;
-  onewire_device_iter_handle_t iter = nullptr;
+  onewire_device_iter_handle_t iter = NULL;
   onewire_device_t next_onewire_device;
   esp_err_t search = ESP_OK;
 
@@ -32,17 +32,16 @@ static void process(TempSensor &ts) {
       ds18b20_config_t ds_cfg = {};
       onewire_device_address_t address;
 
-      esp_err_t err = ds18b20_new_device_from_enumeration(
-          &next_onewire_device, &ds_cfg,
-          &sensor);
+      esp_err_t err = ds18b20_new_device_from_enumeration(&next_onewire_device,
+                                                          &ds_cfg, &sensor);
 
       if (err == ESP_OK) {
         ds18b20_get_device_address(sensor, &address);
-        ESP_LOGI(logTag, "found DS18B20 at %016llX", address);
+        ESP_LOGI(TAG, "found DS18B20 at %016llX", address);
         break;
       }
 
-      ESP_LOGI(logTag, "found unknown device at %016llX",
+      ESP_LOGI(TAG, "found unknown device at %016llX",
                next_onewire_device.address);
     }
   } while (search != ESP_ERR_NOT_FOUND);
@@ -50,44 +49,46 @@ static void process(TempSensor &ts) {
   ESP_ERROR_CHECK(onewire_del_device_iter(iter));
   ESP_ERROR_CHECK(ds18b20_set_resolution(sensor, DS18B20_RESOLUTION_12B));
 
-  Measurement ms{
-      .type = MeasurementType::TEMPERATURE,
-      .sensor = ts.name,
+  measurement ms = {
+      .type = TEMPERATURE,
+      .sensor = ts->name,
   };
 
   while (true) {
-    float temp = 0;
+    float temp = .0f;
 
     vTaskDelay(seconds(15));
 
     ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
     ESP_ERROR_CHECK(ds18b20_get_temperature(sensor, &temp));
-    ESP_LOGI(logTag, "temperature: %.2fC", temp);
+    ESP_LOGI(TAG, "temperature: %.2f°C", temp);
 
-    ms.setTemp(temp);
+    measure_set_temp(&ms, temp);
 
-    if (!ts.queue->putRetrying(ms)) {
-      ESP_LOGE(logTag, "could not put temp measurement into queue");
+    if (!queue_put(ts->queue, &ms)) {
+      ESP_LOGE(TAG, "queue is full");
     }
   }
 }
 
 [[noreturn]]
-static void taskCollection(void *arg) {
-  TempSensor &sensor = *static_cast<TempSensor *>(arg);
+static void task_temp(void *arg) {
+  temp_sensor *sensor = arg;
 
-  ESP_LOGI(logTag, "starting temp collection task for %s", sensor.name);
+  ESP_LOGI(TAG, "starting temp task for %s", sensor->name);
 
   while (true) {
     vTaskDelay(seconds(2));
     process(sensor);
-    ESP_LOGE(logTag, "sensor %s failed, restarting", sensor.name);
+    ESP_LOGE(TAG, "restarting failed sensor %s", sensor->name);
   }
 }
 
-void TempSensor::start(Queue<Measurement> &msQueue) {
-  queue = &msQueue;
-  xTaskCreate(taskCollection, "meas_temp", KiB(4), this, 2, nullptr);
-}
+void temp_start(temp_sensor *sens, queue *q) {
+  sens->queue = q;
 
-} // namespace ds
+  char buf[configMAX_TASK_NAME_LEN];
+  snprintf(buf, sizeof(buf), "temp/%s", sens->name);
+
+  xTaskCreate(task_temp, buf, KiB(4), sens, 2, NULL);
+}

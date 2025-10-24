@@ -4,14 +4,10 @@
 #include "queue.h"
 #include <driver/gpio.h>
 
-namespace ds {
-
-struct TempSensor {
+typedef struct {
   const char *const name;
   const gpio_num_t pin;
-  Queue<Measurement> *queue;
+  queue *queue;
+} temp_sensor;
 
-  void start(Queue<Measurement> &msQueue);
-};
-
-} // namespace ds
+void temp_start(temp_sensor *sens, queue *q);

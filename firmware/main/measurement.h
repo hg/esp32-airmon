@@ -2,33 +2,28 @@
 
 #include "pm.h"
 #include "pms.h"
-#include <ctime>
 
-enum class MeasurementType { TEMPERATURE, PARTICULATES, CO2 };
+typedef enum {
+  TEMPERATURE,
+  PARTICULATE,
+  CO2,
+} measure_type;
 
-struct Measurement {
-  MeasurementType type;
+typedef struct {
+  measure_type type;
   time_t time;
   const char *sensor;
 
   union {
     float temp;
     uint16_t co2;
-    Pm<uint16_t> pm;
+    PM16 pm;
   };
+} measurement;
 
-  template <typename R> void setPM(const Pm<R> &value) {
-    updateTime();
-    pm = value;
-    type = MeasurementType::PARTICULATES;
-  }
+void measure_set_pm(measurement *ms, const PM32 *sum, size_t count);
+void measure_set_temp(measurement *ms, float temp);
+void measure_set_co2(measurement *ms, uint16_t co2);
 
-  void setTemp(float value);
-  void setCO2(uint16_t value);
-
-  [[nodiscard]] const char *getType() const;
-  bool format(char *buf, size_t size);
-
-private:
-  void updateTime();
-};
+const char *measure_get_type(const measurement *ms);
+bool measure_format(const measurement *ms, char *buf, size_t size);

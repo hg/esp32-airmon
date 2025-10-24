@@ -1,3 +1,5 @@
 #pragma once
 
-void initWifi();
+#include "state.h"
+
+void init_wifi(app_state *state);

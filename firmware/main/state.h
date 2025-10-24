@@ -4,28 +4,19 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 
-enum class AppState : EventBits_t {
-  STATE_TIME_VALID = BIT0,
-  STATE_NET_CONNECTED = BIT1,
-};
+typedef enum : EventBits_t {
+  APP_TIME_VALID = BIT0,
+  APP_ONLINE = BIT1,
+} state_bit;
 
-class State {
-public:
-  State() : handle{xEventGroupCreate()} {}
+typedef struct {
+  EventGroupHandle_t handle;
+} app_state;
 
-  State(const State &) = delete;
+void state_init(app_state *st);
+void state_deinit(app_state *st);
 
-  ~State() { vEventGroupDelete(handle); }
-
-  State &operator=(const State &) = delete;
-
-  void wait(AppState bits) const;
-  [[nodiscard]] bool check(AppState bits) const;
-  void set(AppState bits) const;
-  void reset(AppState bits) const;
-
-private:
-  const EventGroupHandle_t handle;
-};
-
-extern State *state;
+void state_wait(app_state *st, state_bit bits);
+bool state_check(app_state *st, state_bit bits);
+void state_set(app_state *st, state_bit bits);
+void state_reset(app_state *st, state_bit bits);

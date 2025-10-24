@@ -2,12 +2,14 @@
 
 #include "freertos/FreeRTOS.h"
 
-constexpr size_t KiB(const size_t kb) { return kb * 1024; }
+inline size_t KiB(size_t kb) {
+  return kb * 1024;
+}
 
-constexpr TickType_t seconds(const TickType_t sec) {
+inline TickType_t seconds(unsigned sec) {
   return sec * configTICK_RATE_HZ;
 }
 
-constexpr TickType_t milliseconds(const TickType_t ms) {
+inline TickType_t millis(unsigned ms) {
   return pdMS_TO_TICKS(ms);
 }
