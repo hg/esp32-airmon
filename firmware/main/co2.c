@@ -87,7 +87,7 @@ static void task_co2(void *arg) {
   co2_sensor *sens = arg;
 
   measurement ms = {
-      .type = CO2,
+      .type = MEASURE_CO2,
       .sensor = sens->name,
   };
 
@@ -137,8 +137,8 @@ void co2_start(co2_sensor *sens, queue *q) {
       .source_clk = UART_SCLK_APB,
   };
 
-  int rx_size = sizeof(co2_response) * 24;
-  assert(rx_size >= UART_HW_FIFO_LEN(sens->port));
+  const int rx_size = sizeof(co2_response) * 24;
+  static_assert(rx_size >= UART_HW_FIFO_LEN(sens->port), "rx_size too low");
 
   esp_err_t err = uart_driver_install(sens->port, rx_size, 0, 0, NULL, 0);
   ESP_ERROR_CHECK(err);

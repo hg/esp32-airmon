@@ -50,7 +50,7 @@ static void process(temp_sensor *ts) {
   ESP_ERROR_CHECK(ds18b20_set_resolution(sensor, DS18B20_RESOLUTION_12B));
 
   measurement ms = {
-      .type = TEMPERATURE,
+      .type = MEASURE_TEMP,
       .sensor = ts->name,
   };
 

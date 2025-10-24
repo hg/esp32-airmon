@@ -4,9 +4,9 @@
 #include "pms.h"
 
 typedef enum {
-  TEMPERATURE,
-  PARTICULATE,
-  CO2,
+  MEASURE_TEMP,
+  MEASURE_PM,
+  MEASURE_CO2,
 } measure_type;
 
 typedef struct {

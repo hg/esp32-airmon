@@ -4,7 +4,7 @@
 #include <freertos/event_groups.h>
 #include <mqtt_client.h>
 
-typedef enum {
+typedef enum : EventBits_t {
   MQTT_READY = BIT0,
 } mqtt_state;
 

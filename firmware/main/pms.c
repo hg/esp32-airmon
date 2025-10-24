@@ -13,7 +13,7 @@ typedef struct {
 
 typedef struct {
   uint16_t magic;
-  uint16_t frameLen;
+  uint16_t frame_len;
   PM16 pm;
   uint16_t reserved;
   uint16_t checksum;
@@ -26,26 +26,24 @@ typedef struct {
 
 static const char *TAG = "air/pm";
 
-static const uint16_t magic = 0x4d42;
+static const uint16_t PM_MAGIC = 0x4d42;
 
-static const uint16_t frameLen = sizeof(pm_response)
-                                 /* magic */
-                                 - sizeof(uint16_t)
-                                 /* frameLen */
-                                 - sizeof(uint16_t);
+static const uint16_t PM_FRAME_LEN = sizeof(pm_response) -
+                                     sizeof((pm_response){}.magic) -
+                                     sizeof((pm_response){}.frame_len);
 
 #define COMMAND(cmd, hi, lo)                                                   \
   {                                                                            \
-      .magic = magic,                                                          \
+      .magic = PM_MAGIC,                                                       \
       .command = cmd,                                                          \
       .data = PP_HTONS((hi << 8) + lo),                                        \
       .checksum = PP_HTONS(0x4d + 0x42 + cmd + lo + hi),                       \
   };
 
-// static const PMSCommand cmd_read = COMMAND(0xe2, 0x00, 0x00);
-// static const PMSCommand cmd_passive = COMMAND(0xe1, 0x00, 0x00);
-// static const PMSCommand cmd_active = COMMAND(0xe1, 0x00, 0x01);
-// static const PMSCommand cmd_sleep = COMMAND(0xe4, 0x00, 0x00);
+// static const pm_command cmd_read = COMMAND(0xe2, 0x00, 0x00);
+// static const pm_command cmd_passive = COMMAND(0xe1, 0x00, 0x00);
+// static const pm_command cmd_active = COMMAND(0xe1, 0x00, 0x01);
+// static const pm_command cmd_sleep = COMMAND(0xe4, 0x00, 0x00);
 static const pm_command cmd_wakeup = COMMAND(0xe4, 0x00, 0x01);
 
 static uint16_t calc_checksum(const pm_response *re) {
@@ -60,7 +58,7 @@ static uint16_t calc_checksum(const pm_response *re) {
 }
 
 static void swap_bytes(pm_response *re) {
-  for (uint16_t *p = &re->frameLen; p <= &re->checksum; ++p) {
+  for (uint16_t *p = &re->frame_len; p <= &re->checksum; ++p) {
     *p = lwip_htons(*p);
   }
 }
@@ -109,15 +107,15 @@ static bool collect(pm_sensor *sens, pm_accum *avg) {
     return false;
   }
 
-  if (resp.magic != magic) {
+  if (resp.magic != PM_MAGIC) {
     ESP_LOGW(TAG, "invalid magic number 0x%x", resp.magic);
     return false;
   }
 
   swap_bytes(&resp);
 
-  if (resp.frameLen != frameLen) {
-    ESP_LOGW(TAG, "invalid frame length %d", resp.frameLen);
+  if (resp.frame_len != PM_FRAME_LEN) {
+    ESP_LOGW(TAG, "invalid frame length %d", resp.frame_len);
     return false;
   }
 
@@ -130,8 +128,8 @@ static bool collect(pm_sensor *sens, pm_accum *avg) {
 
   pm_accum_add(avg, &resp);
 
-  ESP_LOGI(TAG, "cur PM: 1=%dµg, 2.5=%dµg, 10=%dµg", resp.pm.atm.pm1Mcg,
-           resp.pm.atm.pm2Mcg, resp.pm.atm.pm10Mcg);
+  ESP_LOGI(TAG, "cur PM: 1=%dµg, 2.5=%dµg, 10=%dµg", resp.pm.atm.pm1_ug,
+           resp.pm.atm.pm2_ug, resp.pm.atm.pm10_ug);
 
   return true;
 }
@@ -141,7 +139,7 @@ static void task_collect(void *arg) {
   pm_sensor *sens = arg;
 
   measurement ms = {
-      .type = PARTICULATE,
+      .type = MEASURE_PM,
       .sensor = sens->name,
   };
 
@@ -182,7 +180,7 @@ static void task_collect(void *arg) {
       measure_set_pm(&ms, &avg.pm, avg.count);
 
       ESP_LOGI(TAG, "avg PM: 1=%huµg, 2.5=%huµg, 10=%huµg (in %lu ms)",
-               ms.pm.atm.pm1Mcg, ms.pm.atm.pm2Mcg, ms.pm.atm.pm10Mcg,
+               ms.pm.atm.pm1_ug, ms.pm.atm.pm2_ug, ms.pm.atm.pm10_ug,
                timer_millis(&exec));
 
       if (!queue_put(sens->queue, &ms)) {
@@ -206,8 +204,8 @@ void pms_start(pm_sensor *sens, queue *q) {
       .source_clk = UART_SCLK_APB,
   };
 
-  size_t rx_buf = sizeof(pm_response) * 10;
-  assert(rx_buf >= UART_HW_FIFO_LEN(st->port));
+  const int rx_buf = sizeof(pm_response) * 10;
+  static_assert(rx_buf >= UART_HW_FIFO_LEN(st->port), "rx_buf too small");
 
   esp_err_t err;
 

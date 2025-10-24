@@ -6,22 +6,22 @@
 #define PM_STRUCT(T)                                                           \
   struct {                                                                     \
     struct {                                                                   \
-      T pm1Mcg;                                                                \
-      T pm2Mcg;                                                                \
-      T pm10Mcg;                                                               \
+      T pm1_ug;                                                                \
+      T pm2_ug;                                                                \
+      T pm10_ug;                                                               \
     } std;                                                                     \
     struct {                                                                   \
-      T pm1Mcg;                                                                \
-      T pm2Mcg;                                                                \
-      T pm10Mcg;                                                               \
+      T pm1_ug;                                                                \
+      T pm2_ug;                                                                \
+      T pm10_ug;                                                               \
     } atm;                                                                     \
     struct {                                                                   \
-      T pm03Count;                                                             \
-      T pm05Count;                                                             \
-      T pm1Count;                                                              \
-      T pm2Count;                                                              \
-      T pm5Count;                                                              \
-      T pm10Count;                                                             \
+      T pm03_count;                                                            \
+      T pm05_count;                                                            \
+      T pm1_count;                                                             \
+      T pm2_count;                                                             \
+      T pm5_count;                                                             \
+      T pm10_count;                                                            \
     } cnt;                                                                     \
   } __attribute__((packed))
 
