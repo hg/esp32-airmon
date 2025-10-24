@@ -21,6 +21,8 @@ typedef struct {
   };
 } measurement;
 
+static_assert(sizeof(measurement) == 48, "qwe");
+
 void measure_set_pm(measurement *ms, const PM32 *sum, size_t count);
 void measure_set_temp(measurement *ms, float temp);
 void measure_set_co2(measurement *ms, uint16_t co2);

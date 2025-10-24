@@ -153,5 +153,5 @@ void co2_start(co2_sensor *sens, queue *q) {
   char buf[configMAX_TASK_NAME_LEN];
   snprintf(buf, sizeof(buf), "co2/%s", sens->name);
 
-  xTaskCreate(task_co2, buf, KiB(4), sens, 4, NULL);
+  xTaskCreate(task_co2, buf, fromKiB(4), sens, 4, NULL);
 }

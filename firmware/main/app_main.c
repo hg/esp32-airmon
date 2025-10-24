@@ -8,6 +8,7 @@
 #include "net.h"
 #include "pms.h"
 #include "queue.h"
+#include "ram.h"
 #include "state.h"
 
 static const char *TAG = "air/main";
@@ -18,6 +19,8 @@ static void init_log() {
 #else
   esp_log_level_set("*", ESP_LOG_INFO);
 #endif
+
+  start_resource_log();
 }
 
 static void app_init(app_state *state) {
@@ -45,10 +48,12 @@ void app_main() {
 
   app_init(&state);
 
-  // start collectors right away, we can fix time later
+  // allocate most of the free RAM to the measurement queue to preserve data
+  // during prolonged internet outages (roughly 100 KiB)
   queue q = {};
-  queue_init(&q, 200, sizeof(measurement));
+  queue_init(&q, 2000, sizeof(measurement));
 
+  // start collectors right away, we can fix time later
   start_sensors(&q);
   state_wait(&state, APP_ONLINE);
 

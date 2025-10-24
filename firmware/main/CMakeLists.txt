@@ -7,6 +7,7 @@ set(src app_main.c
         dallas.c
         net.c
         co2.c
+        ram.c
         crc16.c
         timer.c
         queue.c)

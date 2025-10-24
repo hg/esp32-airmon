@@ -73,5 +73,5 @@ static void task_sntp(void *arg) {
 }
 
 void sntp_start(app_state *state) {
-  xTaskCreate(task_sntp, "sntp", KiB(2), state, 1, NULL);
+  xTaskCreate(task_sntp, "sntp", fromKiB(2), state, 1, NULL);
 }

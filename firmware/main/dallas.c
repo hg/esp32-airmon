@@ -90,5 +90,5 @@ void temp_start(temp_sensor *sens, queue *q) {
   char buf[configMAX_TASK_NAME_LEN];
   snprintf(buf, sizeof(buf), "temp/%s", sens->name);
 
-  xTaskCreate(task_temp, buf, KiB(4), sens, 2, NULL);
+  xTaskCreate(task_temp, buf, fromKiB(4), sens, 2, NULL);
 }

@@ -224,5 +224,5 @@ void pms_start(pm_sensor *sens, queue *q) {
   char buf[configMAX_TASK_NAME_LEN];
   snprintf(buf, sizeof(buf), "co2/%s", sens->name);
 
-  xTaskCreate(task_collect, buf, KiB(4), sens, 4, NULL);
+  xTaskCreate(task_collect, buf, fromKiB(4), sens, 4, NULL);
 }
