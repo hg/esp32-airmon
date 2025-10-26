@@ -10,6 +10,7 @@ set(src app_main.c
         ram.c
         crc16.c
         temp.c
+        uart.c
         timer.c
         queue.c)
 

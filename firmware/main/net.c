@@ -66,7 +66,6 @@ static_assert(sizeof(CONFIG_WIFI_PASSWORD) <=
 
 // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-lwip-init-phase
 void init_wifi(app_state *state) {
-  // initialize LwIP and main event loop
   esp_err_t err;
 
   err = esp_netif_init();
@@ -75,15 +74,12 @@ void init_wifi(app_state *state) {
   err = esp_event_loop_create_default();
   ESP_ERROR_CHECK(err);
 
-  // create station interface
   esp_netif_t *netif = esp_netif_create_default_wifi_sta();
 
-  // initialize Wi-Fi driver
   wifi_init_config_t wf_init_conf = WIFI_INIT_CONFIG_DEFAULT();
   err = esp_wifi_init(&wf_init_conf);
   ESP_ERROR_CHECK(err);
 
-  // bind event handlers
   err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                             on_wifi_event, NULL, NULL);
   ESP_ERROR_CHECK(err);
@@ -92,19 +88,11 @@ void init_wifi(app_state *state) {
                                             on_ip_event, state, NULL);
   ESP_ERROR_CHECK(err);
 
-  // connect to station
   wifi_config_t wf_conf = {
       .sta =
           {
-              .threshold =
-                  {
-                      .authmode = WIFI_AUTH_WPA2_PSK,
-                  },
-              .pmf_cfg =
-                  {
-                      .capable = true,
-                      .required = false,
-                  },
+              .threshold = {.authmode = WIFI_AUTH_WPA2_PSK},
+              .pmf_cfg = {.capable = true, .required = false},
           },
   };
 

@@ -2,6 +2,7 @@
 #include "common.h"
 #include "measurement.h"
 #include "timer.h"
+#include "uart.h"
 #include "utils.h"
 
 typedef struct {
@@ -195,32 +196,12 @@ static void task_collect(void *arg) {
 void pms_start(pm_sensor *sens, queue *q) {
   sens->queue = q;
 
-  const uart_config_t conf = {
-      .baud_rate = 9600,
-      .data_bits = UART_DATA_8_BITS,
-      .parity = UART_PARITY_DISABLE,
-      .stop_bits = UART_STOP_BITS_1,
-      .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-      .source_clk = UART_SCLK_APB,
-  };
+  esp_err_t err =
+      uart_install(sens->port, sens->tx, sens->rx, sizeof(pm_response));
 
-  const int rx_buf = sizeof(pm_response) * 10;
-  static_assert(rx_buf >= UART_HW_FIFO_LEN(st->port), "rx_buf too small");
-
-  esp_err_t err;
-
-  err = uart_driver_install(sens->port, rx_buf, 0, 0, NULL, 0);
-  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to install UART");
-
-  err = uart_param_config(sens->port, &conf);
-  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to setup UART");
-
-  err = uart_set_pin(sens->port, sens->tx, sens->rx, UART_PIN_NO_CHANGE,
-                     UART_PIN_NO_CHANGE);
-  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to set UART pins");
-
-  char buf[configMAX_TASK_NAME_LEN];
-  snprintf(buf, sizeof(buf), "co2/%s", sens->name);
-
-  xTaskCreate(task_collect, buf, fromKiB(4), sens, 4, NULL);
+  if (err == ESP_OK) {
+    char buf[configMAX_TASK_NAME_LEN];
+    snprintf(buf, sizeof(buf), "co2/%s", sens->name);
+    xTaskCreate(task_collect, buf, fromKiB(4), sens, 4, NULL);
+  }
 }
