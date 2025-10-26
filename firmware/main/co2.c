@@ -1,6 +1,7 @@
 #include "co2.h"
 #include "crc16.h"
 #include "driver/uart.h"
+#include "esp_check.h"
 #include "esp_err.h"
 #include "measurement.h"
 #include "stdio.h"
@@ -141,14 +142,14 @@ void co2_start(co2_sensor *sens, queue *q) {
   static_assert(rx_size >= UART_HW_FIFO_LEN(sens->port), "rx_size too low");
 
   esp_err_t err = uart_driver_install(sens->port, rx_size, 0, 0, NULL, 0);
-  ESP_ERROR_CHECK(err);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to install UART");
 
   err = uart_param_config(sens->port, &conf);
-  ESP_ERROR_CHECK(err);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to setup UART");
 
   err = uart_set_pin(sens->port, sens->tx, sens->rx, UART_PIN_NO_CHANGE,
                      UART_PIN_NO_CHANGE);
-  ESP_ERROR_CHECK(err);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to set UART pins");
 
   char buf[configMAX_TASK_NAME_LEN];
   snprintf(buf, sizeof(buf), "co2/%s", sens->name);

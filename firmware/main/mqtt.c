@@ -96,6 +96,7 @@ void mqtt_init(mqtt_client *mq, const char *uri, const char *hint,
   ESP_ERROR_CHECK(esp_mqtt_client_start(mq->handle));
 }
 
+
 void mqtt_deinit(mqtt_client *mq) {
   esp_mqtt_client_stop(mq->handle);
   esp_mqtt_client_destroy(mq->handle);

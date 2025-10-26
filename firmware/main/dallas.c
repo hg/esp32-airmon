@@ -15,15 +15,17 @@ static void process(temp_sensor *ts) {
   onewire_bus_rmt_config_t rmt_config = {
       .max_rx_bytes = 32,
   };
-  ESP_ERROR_CHECK(onewire_new_bus_rmt(&bus_config, &rmt_config, &bus));
+
+  esp_err_t err = onewire_new_bus_rmt(&bus_config, &rmt_config, &bus);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to create RMT bus");
 
   ds18b20_device_handle_t sensor;
   onewire_device_iter_handle_t iter = NULL;
   onewire_device_t next_onewire_device;
   esp_err_t search = ESP_OK;
 
-  // create 1-wire device iterator, which is used for device search
-  ESP_ERROR_CHECK(onewire_new_device_iter(bus, &iter));
+  err = onewire_new_device_iter(bus, &iter);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to create device iter");
 
   do {
     search = onewire_device_iter_get_next(iter, &next_onewire_device);
@@ -46,8 +48,11 @@ static void process(temp_sensor *ts) {
     }
   } while (search != ESP_ERR_NOT_FOUND);
 
-  ESP_ERROR_CHECK(onewire_del_device_iter(iter));
-  ESP_ERROR_CHECK(ds18b20_set_resolution(sensor, DS18B20_RESOLUTION_12B));
+  err = onewire_del_device_iter(iter);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to delete device iter");
+
+  err = ds18b20_set_resolution(sensor, DS18B20_RESOLUTION_12B);
+  ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to set ds18b20 resolution");
 
   measurement ms = {
       .type = MEASURE_TEMP,
@@ -59,8 +64,12 @@ static void process(temp_sensor *ts) {
 
     vTaskDelay(seconds(15));
 
-    ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
-    ESP_ERROR_CHECK(ds18b20_get_temperature(sensor, &temp));
+    err = ds18b20_trigger_temperature_conversion_for_all(bus);
+    ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to trigger temp conversion");
+
+    err = ds18b20_get_temperature(sensor, &temp);
+    ESP_RETURN_VOID_ON_ERROR(err, TAG, "unable to get temperature");
+
     ESP_LOGI(TAG, "temperature (ds18b20): %.2f°C", temp);
 
     measure_set_temp(&ms, temp);
