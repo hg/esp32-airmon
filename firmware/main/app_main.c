@@ -10,6 +10,7 @@
 #include "queue.h"
 #include "ram.h"
 #include "state.h"
+#include "temp.h"
 
 static const char *TAG = "air/main";
 
@@ -39,6 +40,7 @@ static void start_sensors(queue *q) {
   for (int i = 0; i < ITEMS(co2_sensors); i++) {
     co2_start(&co2_sensors[i], q);
   }
+  temp_start_int();
 }
 
 [[noreturn]]

@@ -4,7 +4,7 @@
 #include "onewire_bus.h"
 #include "utils.h"
 
-static const char *TAG = "air/temp";
+static const char *TAG = "air/tmp/ds";
 
 static void process(temp_sensor *ts) {
   onewire_bus_handle_t bus;
@@ -61,7 +61,7 @@ static void process(temp_sensor *ts) {
 
     ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
     ESP_ERROR_CHECK(ds18b20_get_temperature(sensor, &temp));
-    ESP_LOGI(TAG, "temperature: %.2f°C", temp);
+    ESP_LOGI(TAG, "temperature (ds18b20): %.2f°C", temp);
 
     measure_set_temp(&ms, temp);
 

@@ -9,10 +9,12 @@ set(src app_main.c
         co2.c
         ram.c
         crc16.c
+        temp.c
         timer.c
         queue.c)
 
 set(mod esp_driver_gpio
+        esp_driver_tsens
         esp_driver_uart
         esp_wifi
         mqtt

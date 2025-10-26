@@ -27,5 +27,5 @@ dependencies:
 direct_dependencies:
 - espressif/ds18b20
 manifest_hash: d24f98b9cb37d9a3fde5df806eafa9f94fcf3ff4ff9efe18e7506fee00dd5441
-target: esp32
+target: esp32c3
 version: 2.0.0
