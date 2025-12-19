@@ -6,25 +6,27 @@ import (
 	"go.uber.org/zap"
 )
 
+type System string
+
 var (
 	mu      = sync.Mutex{}
-	loggers = make(map[string]*zap.Logger)
+	loggers = make(map[System]*zap.Logger)
 )
 
 const (
-	Main        = "main"
-	Airkaz      = "airkaz"
-	Ceb         = "ceb"
-	Influx      = "influx"
-	Kazhydromet = "kazhydromet"
-	Time        = "time"
-	Mqtt        = "mqtt"
-	OpenData    = "opendata"
-	Net         = "net"
-	Storage     = "storage"
+	Main        System = "main"
+	Airkaz      System = "airkaz"
+	Ceb         System = "ceb"
+	Influx      System = "influx"
+	Kazhydromet System = "kazhydromet"
+	Time        System = "time"
+	Mqtt        System = "mqtt"
+	OpenData    System = "opendata"
+	Net         System = "net"
+	Storage     System = "storage"
 )
 
-func Get(name string) *zap.Logger {
+func Get(name System) *zap.Logger {
 	if logger, ok := loggers[name]; ok {
 		return logger
 	}
@@ -37,6 +39,6 @@ func Get(name string) *zap.Logger {
 	}
 
 	logger, _ := zap.NewProduction()
-	loggers[name] = logger.Named(name)
+	loggers[name] = logger.Named(string(name))
 	return logger
 }
