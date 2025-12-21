@@ -10,6 +10,7 @@ import (
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
+	"github.com/hg/airmon/storage"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"go.uber.org/zap"
 )
@@ -17,10 +18,11 @@ import (
 var log = logger.Get(logger.CityAir)
 
 const base = "https://auatech-vko.kz/harvester/v2"
+const timeFile = "cityair-times.json"
 
 type collector struct {
 	client *net.Client
-	times  map[int]time.Time
+	times  storage.Times
 }
 
 type geo struct {
@@ -57,11 +59,11 @@ func parseDate(input any) (time.Time, error) {
 	return time.Parse("2006-01-02T15:04:05Z", str)
 }
 
-func (col *collector) update() []*result {
+func (co *collector) update() []*result {
 	var posts []*post
 	var results []*result
 
-	if err := col.client.GetJSON(base+"/posts", &posts); err != nil {
+	if err := co.client.GetJSON(base+"/posts", &posts); err != nil {
 		log.Error("unable to load posts", zap.Error(err))
 		return results
 	}
@@ -75,7 +77,7 @@ func (col *collector) update() []*result {
 	ms := measurement{}
 
 	for _, ps := range posts {
-		since, ok := col.times[ps.Id]
+		since, ok := co.times[strconv.Itoa(ps.Id)]
 		if !ok {
 			since = time.Now().Add(-24 * time.Hour)
 		}
@@ -83,7 +85,7 @@ func (col *collector) update() []*result {
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
 			base, ps.Id, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
 
-		if err := col.client.GetJSON(uri, &ms); err != nil {
+		if err := co.client.GetJSON(uri, &ms); err != nil {
 			log.Error("unable to load post",
 				zap.Int("postId", ps.Id),
 				zap.Error(err))
@@ -133,35 +135,36 @@ func (col *collector) update() []*result {
 			results = append(results, re)
 		}
 
-		col.times[ps.Id] = since
+		co.times[strconv.Itoa(ps.Id)] = since
 	}
 
 	return results
 }
 
-func save(sender *influx.MeasurementSender, data []*result) {
+func save(sender *influx.Sender, data []*result) {
 	for _, row := range data {
 		pt := influxdb2.NewPoint("cityair", row.tags, row.fields, row.date)
 		sender.Send(pt)
 	}
 }
 
-func Collect(sender *influx.MeasurementSender) {
+func Collect(sender *influx.Sender) {
 	token := os.Getenv("CITYAIR_TOKEN")
 	if token == "" {
 		log.Error("cityair token not set")
 		return
 	}
 
-	col := &collector{
+	co := &collector{
 		client: net.NewProxiedClient(),
-		times:  make(map[int]time.Time),
+		times:  storage.LoadTime(timeFile),
 	}
-	col.client.SetHeader("Authorization", "Bearer "+token)
+	co.client.SetHeader("Authorization", "Bearer "+token)
 
 	for {
-		rows := col.update()
+		rows := co.update()
 		go save(sender, rows)
+		go storage.SaveTime(timeFile, co.times)
 		time.Sleep(10 * time.Minute)
 	}
 }

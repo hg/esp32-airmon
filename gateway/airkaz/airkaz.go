@@ -3,6 +3,7 @@ package airkaz
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/hg/airmon/influx"
@@ -14,6 +15,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+var log = logger.Get(logger.Airkaz)
 
 var dataRe = regexp.MustCompile(`(?si)<script.*>.*sensors_data\s*=\s*(\[.+])</script`)
 
@@ -37,27 +40,19 @@ type measurement struct {
 	Hour     string   `json:"hour"`
 }
 
-type lastUpdates map[int64]tm.Time
-
 type collector struct {
-	sender      *influx.MeasurementSender
-	client      *net.Client
-	lastUpdates lastUpdates
+	sender *influx.Sender
+	client *net.Client
+	times  storage.Times
 }
 
-const lastUpdatesFilename = "airkaz-times.json"
+const timeFile = "airkaz-times.json"
 
-var log = logger.Get(logger.Airkaz)
-
-func Collect(sender *influx.MeasurementSender) {
+func Collect(sender *influx.Sender) {
 	col := collector{
-		sender:      sender,
-		client:      net.NewProxiedClient(),
-		lastUpdates: lastUpdates{},
-	}
-
-	if last := loadLastUpdates(); last != nil {
-		col.lastUpdates = *last
+		sender: sender,
+		client: net.NewProxiedClient(),
+		times:  storage.LoadTime(timeFile),
 	}
 
 	for {
@@ -68,20 +63,8 @@ func Collect(sender *influx.MeasurementSender) {
 	}
 }
 
-func loadLastUpdates() *lastUpdates {
-	var lu *lastUpdates
-
-	err := storage.Load(lastUpdatesFilename, &lu)
-	if err != nil {
-		lu = nil
-		log.Error("could not load airkaz update times", zap.Error(err))
-	}
-
-	return lu
-}
-
 func (c *collector) saveLastUpdates() {
-	if err := storage.Save(lastUpdatesFilename, c.lastUpdates); err != nil {
+	if err := storage.Save(timeFile, c.times); err != nil {
 		log.Error("could not save airkaz update times", zap.Error(err))
 	}
 }
@@ -103,10 +86,11 @@ func (c *collector) run() error {
 		if meas.Date.Time.After(time.Now()) {
 			meas.Date.Time = meas.Date.Add(-time.Hour)
 		}
-		if last, ok := c.lastUpdates[meas.Id]; ok && !meas.Date.After(last.Time) {
+		key := strconv.FormatInt(meas.Id, 10)
+		if last, ok := c.times[key]; ok && !meas.Date.After(last) {
 			continue
 		}
-		c.lastUpdates[meas.Id] = meas.Date
+		c.times[key] = meas.Date.Time
 		toSave = append(toSave, meas)
 	}
 
@@ -146,11 +130,11 @@ func (c *collector) saveMeasurement(meas *measurement) {
 		"station": meas.Name,
 	}
 
-	save := func(kind string, fields map[string]interface{}) {
+	save := func(kind string, fields map[string]any) {
 		c.sender.Send(influxdb2.NewPoint(kind, tags, fields, meas.Date.Time))
 	}
 
-	pmData := map[string]interface{}{
+	pmData := map[string]any{
 		"lat": meas.Lat,
 		"lon": meas.Lng,
 	}
@@ -164,7 +148,7 @@ func (c *collector) saveMeasurement(meas *measurement) {
 		save("airkaz:particulates", pmData)
 	}
 
-	tempData := make(map[string]interface{})
+	tempData := make(map[string]any)
 	if meas.TempCurr != nil {
 		tempData["temperature"] = *meas.TempCurr
 	}

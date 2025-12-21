@@ -16,7 +16,7 @@ import (
 var log = logger.Get(logger.OpenData)
 
 type worker struct {
-	sender *influx.MeasurementSender
+	sender *influx.Sender
 	client *net.Client
 }
 
@@ -96,7 +96,7 @@ func (w *worker) saveMeasurements(sensors []sensor, city city) {
 				"station":   sens.Name,
 			}
 
-			fields := map[string]interface{}{
+			fields := map[string]any{
 				"co2":         hist.Data.CO2,
 				"pm25":        hist.Data.PM25,
 				"temperature": hist.Data.TempC,
@@ -124,7 +124,7 @@ func (w *worker) fetchAndSave() {
 	}
 }
 
-func Collect(sender *influx.MeasurementSender) {
+func Collect(sender *influx.Sender) {
 	wrk := &worker{
 		sender: sender,
 		client: net.NewProxiedClient(),

@@ -110,15 +110,15 @@ func (c *Client) Get(url string) ([]byte, error) {
 	return c.get(url, accept)
 }
 
-func (c *Client) GetJSON(url string, buf interface{}) error {
+func (c *Client) GetJSON(uri string, buf any) error {
 	const accept = "application/json,text/json;q=0.9"
-	data, err := c.get(url, accept)
+	data, err := c.get(uri, accept)
 	if err == nil {
 		err = json.Unmarshal(data, buf)
 	}
 	if err != nil {
 		log.Error("getJson failed",
-			zap.String("url", url),
+			zap.String("url", uri),
 			zap.Error(err))
 	}
 	return err

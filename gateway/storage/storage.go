@@ -5,12 +5,15 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"time"
 
 	"github.com/hg/airmon/logger"
 	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Storage)
+
+type Times map[string]time.Time
 
 func getPath(filename string) (string, error) {
 	dir := os.Getenv("XDG_CONFIG_HOME")
@@ -31,7 +34,7 @@ func getPath(filename string) (string, error) {
 	return path.Join(dir, filename), nil
 }
 
-func Save(filename string, data interface{}) error {
+func Save(filename string, data any) error {
 	fullPath, err := getPath(filename)
 	if err != nil {
 		return err
@@ -56,13 +59,32 @@ func Save(filename string, data interface{}) error {
 	return err
 }
 
-func Load(filename string, data interface{}) error {
+func LoadTime(file string) Times {
+	var mt Times
+
+	err := Load(file, &mt)
+	if err == nil {
+		return mt
+	}
+
+	log.Error("could not parse measurement times", zap.Error(err))
+	return Times{}
+}
+
+func SaveTime(file string, ms Times) {
+	err := Save(file, ms)
+	if err != nil {
+		log.Error("could not save measurement times", zap.Error(err))
+	}
+}
+
+func Load(filename string, data any) error {
 	fullPath, err := getPath(filename)
 	if err != nil {
 		return err
 	}
 
-	serialized, err := ioutil.ReadFile(fullPath)
+	serialized, err := os.ReadFile(fullPath)
 	if err != nil {
 		log.Error("could not read file", zap.String("path", fullPath))
 		return err

@@ -76,7 +76,7 @@ func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client
 }
 
 type connHandler struct {
-	sender *influx.MeasurementSender
+	sender *influx.Sender
 }
 
 type topic struct {
@@ -90,7 +90,7 @@ var topics = []*topic{
 	{"meas/co2", mon.ParseCarbonDioxide},
 }
 
-func subscribe(t *topic, client mqtt.Client, sender *influx.MeasurementSender) {
+func subscribe(t *topic, client mqtt.Client, sender *influx.Sender) {
 	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
 		if ms, err := t.mapper(msg.Payload()); err == nil {
 			sender.Send(ms.ToPoint())
@@ -115,7 +115,7 @@ func (h *connHandler) onConnect(client mqtt.Client) {
 	}
 }
 
-func StartMqtt(settings *Settings, sender *influx.MeasurementSender) error {
+func StartMqtt(settings *Settings, sender *influx.Sender) error {
 	if err := settings.validate(); err != nil {
 		return err
 	}

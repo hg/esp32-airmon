@@ -66,13 +66,13 @@ func newClient(settings Settings) influxdb2Api.WriteAPIBlocking {
 	return client.WriteAPIBlocking(settings.Org, settings.Bucket)
 }
 
-type MeasurementSender struct {
+type Sender struct {
 	api influxdb2Api.WriteAPIBlocking
 	ch  chan *influxdb2Write.Point
 	ctx context.Context
 }
 
-func (ms *MeasurementSender) Send(point *influxdb2Write.Point) bool {
+func (ms *Sender) Send(point *influxdb2Write.Point) bool {
 	for retry := 0; ; retry++ {
 		select {
 		case ms.ch <- point:
@@ -90,7 +90,7 @@ func (ms *MeasurementSender) Send(point *influxdb2Write.Point) bool {
 	}
 }
 
-func (ms *MeasurementSender) receive() {
+func (ms *Sender) receive() {
 	for point := range ms.ch {
 		if err := ms.api.WritePoint(ms.ctx, point); err == nil {
 			log.Debug("point written")
@@ -100,12 +100,12 @@ func (ms *MeasurementSender) receive() {
 	}
 }
 
-func NewSender(settings Settings) (*MeasurementSender, error) {
+func NewSender(settings Settings) (*Sender, error) {
 	if err := settings.validate(); err != nil {
 		return nil, err
 	}
 
-	sender := &MeasurementSender{
+	sender := &Sender{
 		ch:  make(chan *influxdb2Write.Point, 2000),
 		api: newClient(settings),
 		ctx: context.Background(),

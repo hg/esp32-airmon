@@ -21,7 +21,7 @@ func (t *temperature) ToPoint() *influxdb2Write.Point {
 			"device": t.Device,
 			"sensor": t.Sensor,
 		},
-		map[string]interface{}{
+		map[string]any{
 			"temperature": t.Temperature,
 		},
 		time.Unix(t.Time, 0))

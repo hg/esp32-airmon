@@ -36,7 +36,7 @@ func (t *particulates) ToPoint() *influxdb2Write.Point {
 			"device": t.Device,
 			"sensor": t.Sensor,
 		},
-		map[string]interface{}{
+		map[string]any{
 			"ug_std_1":   t.Standard.Pm1,
 			"ug_std_2_5": t.Standard.Pm2_5,
 			"ug_std_10":  t.Standard.Pm10,

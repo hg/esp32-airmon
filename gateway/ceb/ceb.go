@@ -78,14 +78,14 @@ func (s *staleDetector) isStale(station string, pollutant string, level float64)
 
 type collector struct {
 	stale  *staleDetector
-	sender *influx.MeasurementSender
+	sender *influx.Sender
 	client *net.Client
 	lastAt time.Time
 }
 
 var log = logger.Get(logger.Ceb)
 
-func Collect(sender *influx.MeasurementSender) {
+func Collect(sender *influx.Sender) {
 	col := collector{
 		sender: sender,
 		stale:  newDetector(),
@@ -172,7 +172,7 @@ func (c *collector) saveMeasurement(ms *measurement) {
 		"pollutant": pollutant,
 	}
 
-	fields := map[string]interface{}{
+	fields := map[string]any{
 		"level_ug": level,
 		"lat":      ms.Lat,
 		"lon":      ms.Lon,

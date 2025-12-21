@@ -16,9 +16,7 @@ import (
 
 var log = logger.Get(logger.Kazhydromet)
 
-const (
-	timeFilename = "kazhydromet-times.json"
-)
+const timeFile = "kazhydromet-times.json"
 
 type measurement struct {
 	Id        string    `json:"id"`
@@ -56,64 +54,19 @@ type entry struct {
 	st *station
 }
 
-type measurementTimes map[string]time.Time
-
 type collector struct {
 	client   *net.Client
-	sender   *influx.MeasurementSender
+	sender   *influx.Sender
+	token    string
 	stations map[int64]*station
-	times    measurementTimes
+	times    storage.Times
 }
 
 func lastMapKey(ms *measurement) string {
 	return strconv.FormatInt(ms.StationId, 10) + "/" + ms.Code
 }
 
-func Collect(sender *influx.MeasurementSender) {
-	c := collector{
-		client:   net.NewProxiedClient(),
-		sender:   sender,
-		stations: make(map[int64]*station),
-		times:    make(measurementTimes),
-	}
-
-	if savedTime := loadSavedTime(); savedTime != nil {
-		c.times = savedTime
-	}
-
-	for {
-		entries, err := c.loadData()
-		if err == nil {
-			go saveTime(c.times)
-			err = c.saveData(entries)
-		}
-		if err != nil {
-			log.Error("could not save kazhydromet data", zap.Error(err))
-		}
-		time.Sleep(20 * time.Minute)
-	}
-}
-
-func saveTime(ms measurementTimes) {
-	err := storage.Save(timeFilename, ms)
-	if err != nil {
-		log.Error("could not save kazhydromet measurement times", zap.Error(err))
-	}
-}
-
-func loadSavedTime() measurementTimes {
-	var mt measurementTimes
-
-	err := storage.Load(timeFilename, &mt)
-	if err == nil {
-		return mt
-	}
-
-	log.Error("could not parse kazhydromet measurement times", zap.Error(err))
-	return nil
-}
-
-func (c *collector) saveData(entries []entry) error {
+func (co *collector) saveData(entries []entry) error {
 	failed := 0
 
 	for _, ent := range entries {
@@ -125,7 +78,7 @@ func (c *collector) saveData(entries []entry) error {
 			"unit":    ent.ms.Unit,
 		}
 
-		fields := map[string]interface{}{
+		fields := map[string]any{
 			"lat":   ent.st.Latitude,
 			"lon":   ent.st.Longitude,
 			"value": ent.ms.Value,
@@ -133,7 +86,7 @@ func (c *collector) saveData(entries []entry) error {
 
 		point := influxdb2.NewPoint("kazhydromet", tags, fields, ent.ms.Date)
 
-		if !c.sender.Send(point) {
+		if !co.sender.Send(point) {
 			failed++
 		}
 	}
@@ -141,10 +94,10 @@ func (c *collector) saveData(entries []entry) error {
 	return errors.New("could not save " + strconv.Itoa(failed) + " points to db")
 }
 
-func (c *collector) loadData() ([]entry, error) {
+func (co *collector) loadData() ([]entry, error) {
 	refreshedStations := false
 
-	measurements, err := c.loadMeasurements()
+	measurements, err := co.loadMeasurements()
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +106,7 @@ func (c *collector) loadData() ([]entry, error) {
 
 	var entries []entry
 	for _, meas := range measurements {
-		stat := c.stations[meas.StationId]
+		stat := co.stations[meas.StationId]
 
 		if stat == nil {
 			if refreshedStations {
@@ -165,12 +118,12 @@ func (c *collector) loadData() ([]entry, error) {
 
 			refreshedStations = true
 
-			if err = c.loadStations(); err != nil {
+			if err = co.loadStations(); err != nil {
 				log.Error("could not load station data", zap.Error(err))
 				continue
 			}
 
-			stat = c.stations[meas.StationId]
+			stat = co.stations[meas.StationId]
 			if stat == nil {
 				log.Error("station not found", zap.Int64("id", meas.StationId))
 				continue
@@ -178,10 +131,10 @@ func (c *collector) loadData() ([]entry, error) {
 		}
 
 		key := lastMapKey(meas)
-		if lastAt, ok := c.times[key]; ok && !meas.Date.After(lastAt) {
+		if lastAt, ok := co.times[key]; ok && !meas.Date.After(lastAt) {
 			continue
 		}
-		c.times[key] = meas.Date
+		co.times[key] = meas.Date
 
 		entries = append(entries, entry{ms: meas, st: stat})
 	}
@@ -189,26 +142,53 @@ func (c *collector) loadData() ([]entry, error) {
 	return entries, nil
 }
 
-func (c *collector) loadMeasurements() (measurements []*measurement, err error) {
-	key := os.Getenv("KAZHYDROMET_KEY")
-	url := "http://atmosphera.kz:4003/simple/averages/last?key=" + key
-	err = c.client.GetJSON(url, &measurements)
+func (co *collector) loadMeasurements() (ms []*measurement, err error) {
+	uri := "http://atmosphera.kz:4003/simple/averages/last?key=" + co.token
+	err = co.client.GetJSON(uri, &ms)
 	return
 }
 
-func (c *collector) loadStations() error {
+func (co *collector) loadStations() error {
 	var stations []*station
 
-	err := c.client.GetJSON("http://atmosphera.kz:4004/stations", &stations)
+	err := co.client.GetJSON("http://atmosphera.kz:4004/stations", &stations)
 	if err != nil {
 		return err
 	}
 
-	c.stations = make(map[int64]*station)
+	co.stations = make(map[int64]*station)
 
 	for _, stat := range stations {
-		c.stations[stat.Id] = stat
+		co.stations[stat.Id] = stat
 	}
 
 	return nil
+}
+
+func Collect(sender *influx.Sender) {
+	token := os.Getenv("KAZHYDROMET_TOKEN")
+	if token == "" {
+		log.Error("kazhydromet token not set")
+		return
+	}
+
+	c := collector{
+		client:   net.NewProxiedClient(),
+		sender:   sender,
+		stations: make(map[int64]*station),
+		times:    storage.LoadTime(timeFile),
+		token:    token,
+	}
+
+	for {
+		entries, err := c.loadData()
+		if err == nil {
+			go storage.SaveTime(timeFile, c.times)
+			err = c.saveData(entries)
+		}
+		if err != nil {
+			log.Error("could not save kazhydromet data", zap.Error(err))
+		}
+		time.Sleep(15 * time.Minute)
+	}
 }
