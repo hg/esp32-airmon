@@ -24,6 +24,7 @@ const (
 	OpenData    System = "opendata"
 	Net         System = "net"
 	Storage     System = "storage"
+	CityAir     System = "cityair"
 )
 
 func Get(name System) *zap.Logger {

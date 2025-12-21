@@ -3,12 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/hg/airmon/airkaz"
-	"github.com/hg/airmon/ceb"
-	"github.com/hg/airmon/kazhydromet"
-	"github.com/hg/airmon/opendata"
 	"os"
 	"runtime/pprof"
+
+	"github.com/hg/airmon/airkaz"
+	"github.com/hg/airmon/ceb"
+	"github.com/hg/airmon/cityair"
+	"github.com/hg/airmon/kazhydromet"
+	"github.com/hg/airmon/opendata"
 
 	"github.com/hg/airmon/influx"
 	"github.com/hg/airmon/logger"
@@ -51,6 +53,7 @@ func main() {
 	go airkaz.Collect(sender)
 	go ceb.Collect(sender)
 	go opendata.Collect(sender)
+	go cityair.Collect(sender)
 
 	if err = mqtt.StartMqtt(&mqts, sender); err != nil {
 		log.Fatal("could not create MQTT client", zap.Error(err))

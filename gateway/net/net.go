@@ -30,7 +30,8 @@ var userAgents = []string{
 var log = logger.Get(logger.Net)
 
 type Client struct {
-	client *http.Client
+	client  *http.Client
+	headers map[string]string
 }
 
 func randomUserAgent() string {
@@ -43,6 +44,7 @@ func NewProxiedClient() *Client {
 		KeepAlive: 180 * time.Second,
 	})
 	return &Client{
+		headers: make(map[string]string),
 		client: &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -89,6 +91,10 @@ func (c *Client) get(uri string, accept string) ([]byte, error) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Sec-Fetch-User", "?1")
 
+	for key, val := range c.headers {
+		req.Header.Set(key, val)
+	}
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		log.Error("get failed", zap.Error(err))
@@ -116,4 +122,8 @@ func (c *Client) GetJSON(url string, buf interface{}) error {
 			zap.Error(err))
 	}
 	return err
+}
+
+func (c *Client) SetHeader(key string, val string) {
+	c.headers[key] = val
 }
