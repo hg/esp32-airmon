@@ -3,7 +3,7 @@ package net
 import (
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -70,7 +70,7 @@ func baseDomain(fullUrl string) string {
 	}
 }
 
-func (c *Client) Get(uri string) ([]byte, error) {
+func (c *Client) get(uri string, accept string) ([]byte, error) {
 	req, err := http.NewRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
@@ -78,21 +78,35 @@ func (c *Client) Get(uri string) ([]byte, error) {
 
 	if domain := baseDomain(uri); domain != "" {
 		req.Header.Set("Referer", domain)
+		req.Header.Set("Host", domain)
 	}
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", randomUserAgent())
+	req.Header.Set("Accept-Language", "ru,en;q=0.5")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Sec-Fetch-User", "?1")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
 		log.Error("get failed", zap.Error(err))
-		return nil, errors.Wrap(err, "airkaz get failed")
+		return nil, errors.Wrap(err, "net request failed")
 	}
 	defer resp.Body.Close()
 
-	return ioutil.ReadAll(resp.Body)
+	return io.ReadAll(resp.Body)
+}
+
+func (c *Client) Get(url string) ([]byte, error) {
+	const accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	return c.get(url, accept)
 }
 
 func (c *Client) GetJSON(url string, buf interface{}) error {
-	data, err := c.Get(url)
+	const accept = "application/json,text/json;q=0.9"
+	data, err := c.get(url, accept)
 	if err == nil {
 		err = json.Unmarshal(data, buf)
 	}
