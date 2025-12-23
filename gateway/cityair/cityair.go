@@ -114,9 +114,10 @@ func (co *collector) update() []*result {
 			re := &result{
 				date: created,
 				tags: map[string]string{
-					"city": "Усть-Каменогорск",
+					"city": "unknown",
 					"post": strconv.Itoa(ps.Id),
 					"name": ps.Name,
+					"tz":   ps.Geo.Timezone,
 				},
 				fields: map[string]any{
 					"lat":     ps.Geo.Lat,
