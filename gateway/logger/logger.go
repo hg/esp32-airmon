@@ -16,7 +16,6 @@ var (
 const (
 	Main        System = "main"
 	Airkaz      System = "airkaz"
-	Ceb         System = "ceb"
 	Influx      System = "influx"
 	Kazhydromet System = "kazhydromet"
 	Time        System = "time"
