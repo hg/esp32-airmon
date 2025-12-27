@@ -21,7 +21,6 @@ const (
 	Kazhydromet System = "kazhydromet"
 	Time        System = "time"
 	Mqtt        System = "mqtt"
-	OpenData    System = "opendata"
 	Net         System = "net"
 	Storage     System = "storage"
 	CityAir     System = "cityair"
