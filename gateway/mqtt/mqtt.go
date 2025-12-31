@@ -1,12 +1,10 @@
 package mqtt
 
 import (
-	"flag"
-	"os"
 	"strings"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mon"
 	"github.com/pkg/errors"
@@ -21,34 +19,16 @@ type Settings struct {
 	Pass   string
 }
 
-func (s *Settings) AddFlags() {
-	flag.StringVar(&s.Broker, "mqtt.broker", "tcp://localhost:1883", "the broker URI")
-	flag.StringVar(&s.User, "mqtt.user", "", "MQTT username")
-	flag.StringVar(&s.Pass, "mqtt.pass", "", "MQTT password")
-}
-
-func (s *Settings) SetFromEnvironment() {
-	if s.Broker == "" {
-		s.Broker = os.Getenv("MQTT_BROKER")
-	}
-	if s.User == "" {
-		s.User = os.Getenv("MQTT_USER")
-	}
-	if s.Pass == "" {
-		s.Pass = os.Getenv("MQTT_PASS")
-	}
-}
-
-func (s *Settings) validate() error {
-	if s.Broker == "" {
+func (se *Settings) validate() error {
+	if se.Broker == "" {
 		return errors.New("MQTT broker is empty")
 	}
-	if s.User != "" {
-		log.Info("using username", zap.String("username", s.User))
+	if se.User != "" {
+		log.Info("using username", zap.String("username", se.User))
 	}
-	if s.Pass != "" {
+	if se.Pass != "" {
 		log.Info("using MQTT password",
-			zap.String("password", strings.Repeat("*", len(s.Pass))))
+			zap.String("password", strings.Repeat("*", len(se.Pass))))
 	}
 	return nil
 }
@@ -76,12 +56,12 @@ func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client
 }
 
 type connHandler struct {
-	sender *influx.Sender
+	sender *db.Storage
 }
 
 type topic struct {
 	topic  string
-	mapper func(data []byte) (mon.PointSource, error)
+	mapper func(data []byte) (mon.DataSource, error)
 }
 
 var topics = []*topic{
@@ -90,10 +70,10 @@ var topics = []*topic{
 	{"meas/co2", mon.ParseCarbonDioxide},
 }
 
-func subscribe(t *topic, client mqtt.Client, sender *influx.Sender) {
+func subscribe(t *topic, client mqtt.Client, sender *db.Storage) {
 	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
 		if ms, err := t.mapper(msg.Payload()); err == nil {
-			sender.Send(ms.ToPoint())
+			go sender.Enqueue(ms.Convert())
 		} else {
 			log.Error("could not parse data",
 				zap.String("topic", t.topic),
@@ -115,7 +95,7 @@ func (h *connHandler) onConnect(client mqtt.Client) {
 	}
 }
 
-func StartMqtt(settings *Settings, sender *influx.Sender) error {
+func Start(settings *Settings, sender *db.Storage) error {
 	if err := settings.validate(); err != nil {
 		return err
 	}

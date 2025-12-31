@@ -3,52 +3,47 @@ package cityair
 import (
 	"fmt"
 	"net/url"
-	"os"
-	"strconv"
 	"time"
 
-	"github.com/hg/airmon/influx"
+	"github.com/hg/airmon/data"
+	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
-	"github.com/hg/airmon/storage"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.CityAir)
 
 const base = "https://auatech-vko.kz/harvester/v2"
-const timeFile = "cityair-times.json"
 
 type collector struct {
 	client *net.Client
-	times  storage.Times
+	sender *db.Storage
 }
 
 type geo struct {
 	Offset   int     `json:"gmtOffsetSeconds"`
 	Timezone string  `json:"timeZoneIana"`
-	Lat      float64 `json:"latitude"`
-	Lon      float64 `json:"longitude"`
+	Lat      float32 `json:"latitude"`
+	Lon      float32 `json:"longitude"`
 }
 
 type post struct {
-	Id             int      `json:"id"`
-	Name           string   `json:"name"`
-	IsOnline       bool     `json:"isOnline"`
-	IsPublic       bool     `json:"isPublic"`
-	Geo            geo      `json:"geo"`
-	DataValueTypes []string `json:"dataValueTypes"`
+	Id       int      `json:"id"`
+	Name     string   `json:"name"`
+	IsOnline bool     `json:"isOnline"`
+	IsPublic bool     `json:"isPublic"`
+	Geo      geo      `json:"geo"`
+	Types    []string `json:"dataValueTypes"`
+}
+
+type meta struct {
+	Units map[string]string `json:"units"`
 }
 
 type measurement struct {
+	Meta meta             `json:"meta"`
 	Data []map[string]any `json:"data"`
-}
-
-type result struct {
-	date   time.Time
-	tags   map[string]string
-	fields map[string]any
 }
 
 func parseDate(input any) (time.Time, error) {
@@ -59,29 +54,48 @@ func parseDate(input any) (time.Time, error) {
 	return time.Parse("2006-01-02T15:04:05Z", str)
 }
 
-func (co *collector) update() []*result {
+func toFloat(val any) (float32, bool) {
+	switch val := val.(type) {
+	case float32:
+		return val, true
+	case float64:
+		return float32(val), true
+	case int:
+		return float32(val), true
+	case int32:
+		return float32(val), true
+	case int64:
+		return float32(val), true
+	default:
+		return 0, false
+	}
+}
+
+func (co *collector) loadPosts() []*post {
 	var posts []*post
-	var results []*result
 
 	if err := co.client.GetJSON(base+"/posts", &posts); err != nil {
 		log.Error("unable to load posts", zap.Error(err))
-		return results
+		return nil
 	}
 
 	log.Info("loaded posts", zap.Int("count", len(posts)))
+	return posts
+}
 
+func (co *collector) update() []data.Measure {
+	var results []data.Measure
+
+	posts := co.loadPosts()
 	if len(posts) == 0 {
-		return results
+		return nil
 	}
 
-	ms := measurement{}
+	var ms measurement
+
+	since := time.Now().Add(-6 * time.Hour)
 
 	for _, ps := range posts {
-		since, ok := co.times[strconv.Itoa(ps.Id)]
-		if !ok {
-			since = time.Now().Add(-24 * time.Hour)
-		}
-
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
 			base, ps.Id, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
 
@@ -93,79 +107,71 @@ func (co *collector) update() []*result {
 		}
 
 		for _, values := range ms.Data {
-			createdRaw, ok := values["date"]
+			dateRaw, ok := values["date"]
 			if !ok {
 				log.Error("date not found in measurement")
 				continue
 			}
 
-			created, err := parseDate(createdRaw)
+			date, err := parseDate(dateRaw)
 			if err != nil {
 				log.Error("unable to parse date",
-					zap.Any("date", createdRaw),
+					zap.Any("date", dateRaw),
 					zap.Error(err))
 				continue
 			}
 
-			if created.After(since) {
-				since = created
-			}
+			var level []data.Level
 
-			re := &result{
-				date: created,
-				tags: map[string]string{
-					"city": "unknown",
-					"post": strconv.Itoa(ps.Id),
-					"name": ps.Name,
-					"tz":   ps.Geo.Timezone,
-				},
-				fields: map[string]any{
-					"lat":     ps.Geo.Lat,
-					"lon":     ps.Geo.Lon,
-					"version": values["version"],
-				},
-			}
-
-			for k, v := range values {
-				switch val := v.(type) {
-				case float32, float64:
-					re.fields[k] = val
+			for sub, unit := range ms.Meta.Units {
+				raw, ok := values[sub]
+				if !ok {
+					continue
+				}
+				if val, ok := toFloat(raw); ok {
+					level = append(level, data.Level{
+						Substance: sub,
+						Unit:      unit,
+						Value:     val,
+					})
 				}
 			}
 
-			results = append(results, re)
-		}
+			if len(level) == 0 {
+				continue
+			}
 
-		co.times[strconv.Itoa(ps.Id)] = since
+			results = append(results, data.Measure{
+				Date: date,
+				Post: &data.Post{
+					Source: data.Cityair,
+					Name:   ps.Name,
+					Lon:    ps.Geo.Lon,
+					Lat:    ps.Geo.Lat,
+				},
+				Level: level,
+			})
+		}
 	}
 
 	return results
 }
 
-func save(sender *influx.Sender, data []*result) {
-	for _, row := range data {
-		pt := influxdb2.NewPoint("cityair", row.tags, row.fields, row.date)
-		sender.Send(pt)
+func (co *collector) collect() {
+	for {
+		rows := co.update()
+		go co.sender.Enqueue(rows)
+		log.Info("cityair updated")
+		time.Sleep(10 * time.Minute)
 	}
 }
 
-func Collect(sender *influx.Sender) {
-	token := os.Getenv("CITYAIR_TOKEN")
-	if token == "" {
-		log.Error("cityair token not set")
-		return
-	}
-
+func Start(sender *db.Storage, token string) {
 	co := &collector{
 		client: net.NewProxiedClient(),
-		times:  storage.LoadTime(timeFile),
+		sender: sender,
 	}
 	co.client.SetHeader("Authorization", "Bearer "+token)
 
-	for {
-		rows := co.update()
-		go save(sender, rows)
-		go storage.SaveTime(timeFile, co.times)
-		time.Sleep(10 * time.Minute)
-	}
+	go co.collect()
 }

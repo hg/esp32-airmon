@@ -16,28 +16,27 @@ var (
 const (
 	Main        System = "main"
 	Airkaz      System = "airkaz"
-	Influx      System = "influx"
+	Database    System = "database"
 	Kazhydromet System = "kazhydromet"
 	Time        System = "time"
 	Mqtt        System = "mqtt"
 	Net         System = "net"
-	Storage     System = "storage"
 	CityAir     System = "cityair"
 )
 
 func Get(name System) *zap.Logger {
-	if logger, ok := loggers[name]; ok {
-		return logger
+	if log, ok := loggers[name]; ok {
+		return log
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if logger, ok := loggers[name]; ok {
-		return logger
+	if log, ok := loggers[name]; ok {
+		return log
 	}
 
-	logger, _ := zap.NewProduction()
-	loggers[name] = logger.Named(string(name))
-	return logger
+	log, _ := zap.NewProduction()
+	loggers[name] = log.Named(string(name))
+	return log
 }

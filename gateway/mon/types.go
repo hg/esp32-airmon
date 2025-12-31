@@ -1,9 +1,7 @@
 package mon
 
-import (
-	influxdb2Write "github.com/influxdata/influxdb-client-go/v2/api/write"
-)
+import "github.com/hg/airmon/data"
 
-type PointSource interface {
-	ToPoint() *influxdb2Write.Point
+type DataSource interface {
+	Convert() []data.Measure
 }
