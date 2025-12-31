@@ -17,10 +17,15 @@ var log = logger.Get(logger.CityAir)
 
 const base = "https://auatech-vko.kz/harvester/v2"
 
+type schedule struct {
+	nextFull time.Time
+	center   spatial.Point
+}
+
 type collector struct {
 	client *net.Client
 	sender *db.Storage
-	full   time.Time
+	sched  *schedule
 }
 
 type geo struct {
@@ -36,6 +41,10 @@ type post struct {
 
 type meta struct {
 	Units map[string]string `json:"units"`
+}
+
+func (fu *schedule) schedule() {
+	fu.nextFull = time.Now().Add(3 * time.Hour)
 }
 
 func (g *geo) toPoint() spatial.Point {
@@ -87,6 +96,18 @@ func (co *collector) loadPosts() []post {
 	return posts
 }
 
+func (co *collector) isPartialUpdate() bool {
+	if co.sched == nil {
+		return false // no coordinates, poll everything
+	}
+	full := co.sched.nextFull.Before(time.Now())
+	if full {
+		co.sched.schedule()
+		log.Info("full update: also fetching data for remote stations")
+	}
+	return !full
+}
+
 func (co *collector) update() []data.Measure {
 	var result []data.Measure
 
@@ -95,27 +116,15 @@ func (co *collector) update() []data.Measure {
 		return nil
 	}
 
-	center := spatial.Point{
-		Lat: 49.9549,
-		Lon: 82.6154,
-	}
-
 	var measure measure
 
 	since := time.Now().Add(-6 * time.Hour)
-
-	quick := co.full.After(time.Now())
-	if quick {
-		log.Info("quick update: excluding remote stations")
-	} else {
-		co.full = time.Now().Add(3 * time.Hour)
-		log.Info("full update: also fetching data for remote stations")
-	}
+	partial := co.isPartialUpdate()
 
 	for _, post := range posts {
-		if quick {
-			dist := spatial.Haversine(center, post.Geo.toPoint())
-			if dist > 50_000 {
+		if partial {
+			dist := spatial.Haversine(co.sched.center, post.Geo.toPoint())
+			if dist > 100_000 {
 				log.Debug("skipping remote post",
 					zap.Int("id", post.Id),
 					zap.Float64("distance", dist))
@@ -199,12 +208,28 @@ func (co *collector) collect() {
 	}
 }
 
-func Start(sender *db.Storage, token string) {
+type Settings struct {
+	Token  string
+	LatLon string
+}
+
+func Start(sender *db.Storage, set Settings) {
 	co := &collector{
 		client: net.NewProxiedClient(),
 		sender: sender,
+		sched:  nil,
 	}
-	co.client.SetHeader("Authorization", "Bearer "+token)
+	co.client.SetHeader("Authorization", "Bearer "+set.Token)
+
+	if set.LatLon != "" {
+		center, err := spatial.ParsePoint(set.LatLon)
+		if err == nil {
+			co.sched = &schedule{center: center}
+			co.sched.schedule() // avoid spamming API calls on frequent restarts
+		} else {
+			log.Error("invalid center coordinate", zap.Error(err))
+		}
+	}
 
 	go co.collect()
 }

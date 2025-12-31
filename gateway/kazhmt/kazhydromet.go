@@ -13,6 +13,10 @@ import (
 
 var log = logger.Get(logger.Kazhydromet)
 
+type Settings struct {
+	Token string
+}
+
 type average struct {
 	Id        string    `json:"id"`
 	Value     float32   `json:"value"`
@@ -172,11 +176,11 @@ func (co *collector) collect() {
 	}
 }
 
-func Start(sender *db.Storage, token string) {
+func Start(sender *db.Storage, set Settings) {
 	co := collector{
 		client: net.NewProxiedClient(),
 		sender: sender,
-		token:  token,
+		token:  set.Token,
 	}
 
 	go co.collect()

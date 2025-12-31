@@ -36,14 +36,16 @@ type tokens struct {
 func main() {
 	var mqs mqtt.Settings
 	var dbs db.Settings
-	var tok tokens
+	var cas cityair.Settings
+	var khs kazhmt.Settings
 
 	flag.StringVar(&mqs.Broker, "mqtt.broker", env("MQTT_BROKER", defaultBroker), "MQTT broker URI")
 	flag.StringVar(&mqs.User, "mqtt.user", env("MQTT_USER", ""), "MQTT username")
 	flag.StringVar(&mqs.Pass, "mqtt.pass", env("MQTT_PASS", ""), "MQTT password")
 	flag.StringVar(&dbs.Uri, "db", env("POSTGRES_URI", defaultDB), "PostgreSQL connection URI")
-	flag.StringVar(&tok.kazhmt, "kazhmt.token", env("KAZHYDROMET_TOKEN", ""), "kazhydromet auth token")
-	flag.StringVar(&tok.cityair, "cityair.token", env("CITYAIR_TOKEN", ""), "cityair auth token")
+	flag.StringVar(&khs.Token, "kazhmt.token", env("KAZHYDROMET_TOKEN", ""), "kazhydromet auth token")
+	flag.StringVar(&cas.Token, "cityair.token", env("CITYAIR_TOKEN", ""), "cityair auth token")
+	flag.StringVar(&cas.LatLon, "cityair.latlon", env("CITYAIR_CENTER", ""), "frequently poll stations in this location, e.g. 12.34,-34.56 ")
 	flag.Parse()
 
 	send, err := db.NewStorage(dbs)
@@ -59,11 +61,11 @@ func main() {
 		}
 	}
 
-	if tok.cityair != "" {
-		cityair.Start(send, tok.cityair)
+	if cas.Token != "" {
+		cityair.Start(send, cas)
 	}
-	if tok.kazhmt != "" {
-		kazhmt.Start(send, tok.kazhmt)
+	if khs.Token != "" {
+		kazhmt.Start(send, khs)
 	}
 	airkaz.Start(send)
 
