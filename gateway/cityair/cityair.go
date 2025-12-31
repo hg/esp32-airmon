@@ -9,6 +9,7 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
+	"github.com/hg/airmon/spatial"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,7 @@ const base = "https://auatech-vko.kz/harvester/v2"
 type collector struct {
 	client *net.Client
 	sender *db.Storage
+	full   time.Time
 }
 
 type geo struct {
@@ -34,6 +36,13 @@ type post struct {
 
 type meta struct {
 	Units map[string]string `json:"units"`
+}
+
+func (g *geo) toPoint() spatial.Point {
+	return spatial.Point{
+		Lat: float64(g.Lat),
+		Lon: float64(g.Lon),
+	}
 }
 
 type measure struct {
@@ -86,11 +95,34 @@ func (co *collector) update() []data.Measure {
 		return nil
 	}
 
+	center := spatial.Point{
+		Lat: 49.9549,
+		Lon: 82.6154,
+	}
+
 	var measure measure
 
 	since := time.Now().Add(-6 * time.Hour)
 
+	quick := co.full.After(time.Now())
+	if quick {
+		log.Info("quick update: excluding remote stations")
+	} else {
+		co.full = time.Now().Add(3 * time.Hour)
+		log.Info("full update: also fetching data for remote stations")
+	}
+
 	for _, post := range posts {
+		if quick {
+			dist := spatial.Haversine(center, post.Geo.toPoint())
+			if dist > 50_000 {
+				log.Debug("skipping remote post",
+					zap.Int("id", post.Id),
+					zap.Float64("distance", dist))
+				continue
+			}
+		}
+
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
 			base, post.Id, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
 
@@ -163,7 +195,7 @@ func (co *collector) collect() {
 		rows := co.update()
 		go co.sender.Enqueue(rows)
 		log.Info("cityair updated")
-		time.Sleep(10 * time.Minute)
+		time.Sleep(5 * time.Minute)
 	}
 }
 
