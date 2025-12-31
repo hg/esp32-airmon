@@ -36,7 +36,11 @@ func Get(name System) *zap.Logger {
 		return log
 	}
 
-	log, _ := zap.NewProduction()
+	log, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+
 	loggers[name] = log.Named(string(name))
-	return log
+	return loggers[name]
 }

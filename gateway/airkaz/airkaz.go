@@ -19,7 +19,6 @@ var log = logger.Get(logger.Airkaz)
 var dataRe = regexp.MustCompile(`(?si)<script.*>.*sensors_data\s*=\s*(\[.+])</script`)
 
 type measurement struct {
-	Id       int64    `json:"id,string"`
 	City     string   `json:"city"`
 	Name     string   `json:"name"`
 	Lat      float32  `json:"lat,string"`
@@ -75,16 +74,24 @@ func (ms *measurement) convert() data.Measure {
 	add("RH", "%", ms.Humidity)
 	add("BP", "mmHg", ms.Pressure)
 
+	if len(level) == 0 {
+		return data.Measure{}
+	}
+
 	return data.Measure{
-		Date: ms.Date.Time,
-		Post: &data.Post{
+		Post: data.Post{
 			Source: data.Airkaz,
 			Name:   ms.City + ":" + ms.Name, // TODO: legacy data
 			City:   ms.City,
 			Lon:    ms.Lng,
 			Lat:    ms.Lat,
 		},
-		Level: level,
+		Rows: []data.Observation{
+			{
+				Date:  ms.Date.Time,
+				Level: level,
+			},
+		},
 	}
 }
 
@@ -107,7 +114,7 @@ func (co *collector) update() error {
 		if ms.Date.Time.After(now) {
 			ms.Date.Time = ms.Date.Add(-time.Hour)
 		}
-		if row := ms.convert(); len(row.Level) > 0 {
+		if row := ms.convert(); len(row.Rows) > 0 {
 			rows = append(rows, row)
 		}
 	}

@@ -14,23 +14,26 @@ type temperature struct {
 	Temperature float32 `json:"temp"`
 }
 
-func (t *temperature) Convert() []data.Measure {
-	return []data.Measure{
+func ParseTemp(raw []byte) ([]data.Measure, error) {
+	var ms temperature
+	if err := json.Unmarshal(raw, &ms); err != nil {
+		return nil, err
+	}
+	rows := []data.Measure{
 		{
-			Date: time.Unix(t.Time, 0),
-			Post: &data.Post{
+			Post: data.Post{
 				Source: data.Custom,
-				Name:   t.Device,
+				Name:   ms.Device,
 			},
-			Level: []data.Level{
-				{Substance: "TEMP", Unit: "°C", Value: t.Temperature},
+			Rows: []data.Observation{
+				{
+					Date: time.Unix(ms.Time, 0),
+					Level: []data.Level{
+						{Substance: "TEMP", Unit: "°C", Value: ms.Temperature},
+					},
+				},
 			},
 		},
 	}
-}
-
-func ParseTemperature(data []byte) (DataSource, error) {
-	ms := &temperature{}
-	err := json.Unmarshal(data, ms)
-	return ms, err
+	return rows, nil
 }

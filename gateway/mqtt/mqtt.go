@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/hg/airmon/data"
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mon"
@@ -59,21 +60,28 @@ type connHandler struct {
 	sender *db.Storage
 }
 
+type mapper func(data []byte) ([]data.Measure, error)
+
 type topic struct {
 	topic  string
-	mapper func(data []byte) (mon.DataSource, error)
+	mapper mapper
 }
 
 var topics = []*topic{
-	{"meas/part", mon.ParseParticulates},
-	{"meas/temp", mon.ParseTemperature},
-	{"meas/co2", mon.ParseCarbonDioxide},
+	{"meas/part", mon.ParsePM},
+	{"meas/temp", mon.ParseTemp},
+	{"meas/co2", mon.ParseCO2},
 }
 
 func subscribe(t *topic, client mqtt.Client, sender *db.Storage) {
 	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
-		if ms, err := t.mapper(msg.Payload()); err == nil {
-			go sender.Enqueue(ms.Convert())
+		raw := msg.Payload()
+		if len(raw) == 0 {
+			log.Error("empty message", zap.Uint16("id", msg.MessageID()))
+			return
+		}
+		if mss, err := t.mapper(raw); err == nil {
+			go sender.Enqueue(mss)
 		} else {
 			log.Error("could not parse data",
 				zap.String("topic", t.topic),

@@ -13,7 +13,7 @@ type density struct {
 	Pm10 float32 `json:"pm10"`
 }
 
-type particulates struct {
+type parts struct {
 	Device string  `json:"dev"`
 	Time   int64   `json:"time"`
 	Sensor string  `json:"sens"`
@@ -29,25 +29,28 @@ type particulates struct {
 	} `json:"cnt"`
 }
 
-func (t *particulates) Convert() []data.Measure {
-	return []data.Measure{
+func ParsePM(raw []byte) ([]data.Measure, error) {
+	var ms parts
+	if err := json.Unmarshal(raw, &ms); err != nil {
+		return nil, err
+	}
+	rows := []data.Measure{
 		{
-			Date: time.Unix(t.Time, 0),
-			Post: &data.Post{
+			Post: data.Post{
 				Source: data.Custom,
-				Name:   t.Device,
+				Name:   ms.Device,
 			},
-			Level: []data.Level{
-				{Substance: "PM1", Unit: "µg/m³", Value: t.Atm.Pm1},
-				{Substance: "PM2.5", Unit: "µg/m³", Value: t.Atm.Pm25},
-				{Substance: "PM10", Unit: "µg/m³", Value: t.Atm.Pm10},
+			Rows: []data.Observation{
+				{
+					Date: time.Unix(ms.Time, 0),
+					Level: []data.Level{
+						{Substance: "PM1", Unit: "µg/m³", Value: ms.Atm.Pm1},
+						{Substance: "PM2.5", Unit: "µg/m³", Value: ms.Atm.Pm25},
+						{Substance: "PM10", Unit: "µg/m³", Value: ms.Atm.Pm10},
+					},
+				},
 			},
 		},
 	}
-}
-
-func ParseParticulates(data []byte) (DataSource, error) {
-	ms := &particulates{}
-	err := json.Unmarshal(data, ms)
-	return ms, err
+	return rows, nil
 }

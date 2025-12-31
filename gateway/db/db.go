@@ -19,25 +19,36 @@ type Storage struct {
 }
 
 func (st *Storage) save(mss []data.Measure) {
+	// Substances can disappear or be changed at any moment,
+	// cache them only for the duration of the batch
+	subToId := make(map[string]int)
+
 	for _, ms := range mss {
 		postId, err := st.getPost(ms.Post)
 		if err != nil {
 			log.Error("unable to get post", zap.Error(err))
 			continue
 		}
-		obsId, err := st.getObservation(postId, ms.Date)
-		if err != nil {
-			log.Error("unable to get observation", zap.Error(err))
-			continue
-		}
-		for _, lvl := range ms.Level {
-			subId, err := st.getSubstance(lvl.Substance)
+		for _, row := range ms.Rows {
+			obsId, err := st.getObservation(postId, row.Date)
 			if err != nil {
-				log.Error("unable to get substance", zap.Error(err))
+				log.Error("unable to get observation", zap.Error(err))
 				continue
 			}
-			value := data.ConvertUnit(lvl.Value, lvl.Unit)
-			st.addLevel(obsId, subId, value)
+			for _, lvl := range row.Level {
+				sub := data.NormalizeSubstance(lvl.Substance)
+				subId, ok := subToId[sub]
+				if !ok {
+					subId, err = st.getSubstance(sub)
+					if err != nil {
+						log.Error("unable to get substance", zap.Error(err))
+						continue
+					}
+					subToId[sub] = subId
+				}
+				value := data.ConvertUnit(lvl.Value, lvl.Unit)
+				st.addLevel(obsId, subId, value)
+			}
 		}
 	}
 }
@@ -47,10 +58,22 @@ func (st *Storage) receive() {
 		start := time.Now()
 		st.save(mss)
 
-		spent := time.Since(start)
-		log.Info("saved data",
-			zap.Int("rows", len(mss)),
-			zap.Duration("time", spent))
+		if len(mss) > 1 {
+			spent := time.Since(start)
+			observations, levels := 0, 0
+			for _, ms := range mss {
+				observations += len(ms.Rows)
+				for _, row := range ms.Rows {
+					levels += len(row.Level)
+				}
+			}
+			log.Info("saved data",
+				zap.String("source", string(mss[0].Post.Source)),
+				zap.Int("measures", len(mss)),
+				zap.Int("observations", observations),
+				zap.Int("levels", levels),
+				zap.Duration("time", spent))
+		}
 	}
 }
 

@@ -6,7 +6,7 @@ type Source string
 
 const (
 	Airkaz      Source = "airkaz"
-	Cityair     Source = "cityair"
+	CityAir     Source = "cityair"
 	Custom      Source = "custom"
 	Kazhydromet Source = "kazhydromet"
 )
@@ -26,8 +26,12 @@ type Level struct {
 	Value     float32
 }
 
-type Measure struct {
+type Observation struct {
 	Date  time.Time
-	Post  *Post
 	Level []Level
+}
+
+type Measure struct {
+	Post Post
+	Rows []Observation
 }

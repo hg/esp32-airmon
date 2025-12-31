@@ -22,26 +22,21 @@ type collector struct {
 }
 
 type geo struct {
-	Offset   int     `json:"gmtOffsetSeconds"`
-	Timezone string  `json:"timeZoneIana"`
-	Lat      float32 `json:"latitude"`
-	Lon      float32 `json:"longitude"`
+	Lat float32 `json:"latitude"`
+	Lon float32 `json:"longitude"`
 }
 
 type post struct {
-	Id       int      `json:"id"`
-	Name     string   `json:"name"`
-	IsOnline bool     `json:"isOnline"`
-	IsPublic bool     `json:"isPublic"`
-	Geo      geo      `json:"geo"`
-	Types    []string `json:"dataValueTypes"`
+	Id   int    `json:"id"`
+	Name string `json:"name"`
+	Geo  geo    `json:"geo"`
 }
 
 type meta struct {
 	Units map[string]string `json:"units"`
 }
 
-type measurement struct {
+type measure struct {
 	Meta meta             `json:"meta"`
 	Data []map[string]any `json:"data"`
 }
@@ -54,8 +49,8 @@ func parseDate(input any) (time.Time, error) {
 	return time.Parse("2006-01-02T15:04:05Z", str)
 }
 
-func toFloat(val any) (float32, bool) {
-	switch val := val.(type) {
+func toFloat(raw any) (float32, bool) {
+	switch val := raw.(type) {
 	case float32:
 		return val, true
 	case float64:
@@ -71,8 +66,8 @@ func toFloat(val any) (float32, bool) {
 	}
 }
 
-func (co *collector) loadPosts() []*post {
-	var posts []*post
+func (co *collector) loadPosts() []post {
+	var posts []post
 
 	if err := co.client.GetJSON(base+"/posts", &posts); err != nil {
 		log.Error("unable to load posts", zap.Error(err))
@@ -84,29 +79,31 @@ func (co *collector) loadPosts() []*post {
 }
 
 func (co *collector) update() []data.Measure {
-	var results []data.Measure
+	var result []data.Measure
 
 	posts := co.loadPosts()
 	if len(posts) == 0 {
 		return nil
 	}
 
-	var ms measurement
+	var measure measure
 
 	since := time.Now().Add(-6 * time.Hour)
 
-	for _, ps := range posts {
+	for _, post := range posts {
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
-			base, ps.Id, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
+			base, post.Id, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
 
-		if err := co.client.GetJSON(uri, &ms); err != nil {
+		if err := co.client.GetJSON(uri, &measure); err != nil {
 			log.Error("unable to load post",
-				zap.Int("postId", ps.Id),
+				zap.Int("postId", post.Id),
 				zap.Error(err))
 			continue
 		}
 
-		for _, values := range ms.Data {
+		var obss []data.Observation
+
+		for _, values := range measure.Data {
 			dateRaw, ok := values["date"]
 			if !ok {
 				log.Error("date not found in measurement")
@@ -123,7 +120,7 @@ func (co *collector) update() []data.Measure {
 
 			var level []data.Level
 
-			for sub, unit := range ms.Meta.Units {
+			for sub, unit := range measure.Meta.Units {
 				raw, ok := values[sub]
 				if !ok {
 					continue
@@ -137,24 +134,28 @@ func (co *collector) update() []data.Measure {
 				}
 			}
 
-			if len(level) == 0 {
-				continue
+			if len(level) > 0 {
+				obss = append(obss, data.Observation{
+					Date:  date,
+					Level: level,
+				})
 			}
+		}
 
-			results = append(results, data.Measure{
-				Date: date,
-				Post: &data.Post{
-					Source: data.Cityair,
-					Name:   ps.Name,
-					Lon:    ps.Geo.Lon,
-					Lat:    ps.Geo.Lat,
+		if len(obss) > 0 {
+			result = append(result, data.Measure{
+				Post: data.Post{
+					Source: data.CityAir,
+					Name:   post.Name,
+					Lon:    post.Geo.Lon,
+					Lat:    post.Geo.Lat,
 				},
-				Level: level,
+				Rows: obss,
 			})
 		}
 	}
 
-	return results
+	return result
 }
 
 func (co *collector) collect() {

@@ -14,23 +14,26 @@ type co2 struct {
 	Co2    float32 `json:"co2"`
 }
 
-func (t *co2) Convert() []data.Measure {
-	return []data.Measure{
+func ParseCO2(raw []byte) ([]data.Measure, error) {
+	var ms co2
+	if err := json.Unmarshal(raw, &ms); err != nil {
+		return nil, err
+	}
+	rows := []data.Measure{
 		{
-			Date: time.Unix(t.Time, 0),
-			Post: &data.Post{
+			Post: data.Post{
 				Source: data.Custom,
-				Name:   t.Device,
+				Name:   ms.Device,
 			},
-			Level: []data.Level{
-				{Substance: "CO2", Unit: "ppm", Value: t.Co2},
+			Rows: []data.Observation{
+				{
+					Date: time.Unix(ms.Time, 0),
+					Level: []data.Level{
+						{Substance: "CO2", Unit: "ppm", Value: ms.Co2},
+					},
+				},
 			},
 		},
 	}
-}
-
-func ParseCarbonDioxide(data []byte) (DataSource, error) {
-	ms := &co2{}
-	err := json.Unmarshal(data, ms)
-	return ms, err
+	return rows, nil
 }

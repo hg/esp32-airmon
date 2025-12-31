@@ -1,7 +1,6 @@
 package db
 
 import (
-	"github.com/hg/airmon/data"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,7 +24,6 @@ const sqlGetSubstance = `
 `
 
 func (st *Storage) getSubstance(name string) (int, error) {
-	name = data.NormalizeSubstance(name)
 	var id int
 	err := st.con.QueryRow(st.ctx, sqlGetSubstance, name).Scan(&id)
 	if err == pgx.ErrNoRows {
