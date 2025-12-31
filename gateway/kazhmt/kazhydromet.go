@@ -40,7 +40,11 @@ type collector struct {
 	sender   *db.Storage
 	token    string
 	stations map[int64]station
-	full     time.Time
+	nextFull time.Time
+}
+
+func (co *collector) scheduleFull() {
+	co.nextFull = time.Now().Add(6 * time.Hour)
 }
 
 func (co *collector) loadAvgs() (map[int64][]average, error) {
@@ -54,7 +58,7 @@ func (co *collector) loadAvgs() (map[int64][]average, error) {
 		return nil, err
 	}
 
-	if co.full.Before(time.Now()) {
+	if co.nextFull.Before(time.Now()) {
 		log.Info("starting kazhydromet history refresh")
 
 		for _, st := range co.stations {
@@ -65,7 +69,7 @@ func (co *collector) loadAvgs() (map[int64][]average, error) {
 			}
 		}
 
-		co.full = time.Now().Add(6 * time.Hour)
+		co.scheduleFull()
 	}
 
 	byStation := make(map[int64][]average)
@@ -182,6 +186,7 @@ func Start(sender *db.Storage, set Settings) {
 		sender: sender,
 		token:  set.Token,
 	}
+	co.scheduleFull()
 
 	go co.collect()
 }
