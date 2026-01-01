@@ -3,6 +3,7 @@ package net
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hg/airmon/logger"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 )
@@ -98,7 +98,7 @@ func (c *Client) get(uri string, accept string) ([]byte, error) {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		log.Error("get failed", zap.Error(err))
-		return nil, errors.Wrap(err, "net request failed")
+		return nil, fmt.Errorf("net request failed: %w", err)
 	}
 	defer resp.Body.Close()
 

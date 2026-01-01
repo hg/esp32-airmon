@@ -2,6 +2,7 @@ package airkaz
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/tm"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +47,7 @@ func (co *collector) load() ([]measurement, error) {
 
 	matches := dataRe.FindSubmatch(page)
 	if matches == nil {
-		return nil, errors.Wrap(err, "json not found in response: ")
+		return nil, fmt.Errorf("json not found in response: %w", err)
 	}
 
 	var mss []measurement

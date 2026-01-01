@@ -5,7 +5,6 @@ go 1.25
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/net v0.48.0
 )

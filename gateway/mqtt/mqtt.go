@@ -1,6 +1,8 @@
 package mqtt
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -8,7 +10,6 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mon"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -113,7 +114,7 @@ func Start(settings *Settings, sender *db.Storage) error {
 
 	token := client.Connect()
 	if token.Wait() && token.Error() != nil {
-		return errors.Wrap(token.Error(), "mqtt connect failed")
+		return fmt.Errorf("mqtt connect failed: %w", token.Error())
 	}
 
 	return nil
