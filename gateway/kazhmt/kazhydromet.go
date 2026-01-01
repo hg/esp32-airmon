@@ -175,7 +175,12 @@ func (co *collector) collect() {
 		} else {
 			log.Error("ukazhydromet update failed", "error", err)
 		}
-		time.Sleep(15 * time.Minute)
+		now := time.Now()
+		next := now.
+			Add(time.Hour).
+			Truncate(time.Hour).
+			Add(15 * time.Minute)
+		time.Sleep(next.Sub(now))
 	}
 }
 
