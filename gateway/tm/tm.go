@@ -1,11 +1,11 @@
 package tm
 
 import (
+	"os"
 	"strings"
 	"time"
 
 	"github.com/hg/airmon/logger"
-	"go.uber.org/zap"
 )
 
 const (
@@ -24,7 +24,8 @@ var location *time.Location
 func init() {
 	var err error
 	if location, err = time.LoadLocation(tzName); err != nil {
-		log.Fatal("could not find timezone", zap.String("timezone", tzName))
+		log.Error("could not find timezone", "timezone", tzName)
+		os.Exit(1)
 	}
 }
 

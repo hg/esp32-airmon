@@ -10,14 +10,13 @@ import (
 	"github.com/hg/airmon/kazhmt"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mqtt"
-	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Main)
 
 func env(key string, fallback string) string {
 	if val := os.Getenv(key); val != "" {
-		log.Info("using env var", zap.String("var", key))
+		log.Info("using env var", "var", key)
 		return val
 	}
 	return fallback
@@ -27,11 +26,6 @@ const (
 	defaultBroker = "tcp://localhost:1883"
 	defaultDB     = "postgres://air:pass@localhost:5432/air"
 )
-
-type tokens struct {
-	kazhmt  string
-	cityair string
-}
 
 func main() {
 	var mqs mqtt.Settings
@@ -50,14 +44,14 @@ func main() {
 
 	send, err := db.NewStorage(dbs)
 	if err != nil {
-		log.Fatal("unable to setup db", zap.Error(err))
-		return
+		log.Error("unable to setup db", "error", err)
+		os.Exit(1)
 	}
 
 	if mqs.Broker != "" {
 		if err = mqtt.Start(&mqs, send); err != nil {
-			log.Fatal("unable to setup MQTT client", zap.Error(err))
-			return
+			log.Error("unable to setup MQTT client", "error", err)
+			os.Exit(1)
 		}
 	}
 

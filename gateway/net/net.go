@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hg/airmon/logger"
-	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 )
 
@@ -97,7 +96,7 @@ func (c *Client) get(uri string, accept string) ([]byte, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Error("get failed", zap.Error(err))
+		log.Error("get failed", "error", err)
 		return nil, fmt.Errorf("net request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -118,8 +117,8 @@ func (c *Client) GetJSON(uri string, buf any) error {
 	}
 	if err != nil {
 		log.Error("getJson failed",
-			zap.String("url", uri),
-			zap.Error(err))
+			"url", uri,
+			"error", err)
 	}
 	return err
 }

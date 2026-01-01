@@ -1,17 +1,15 @@
 package logger
 
 import (
+	"log/slog"
+	"os"
 	"sync"
-
-	"go.uber.org/zap"
 )
 
 type System string
 
-var (
-	mu      = sync.Mutex{}
-	loggers = make(map[System]*zap.Logger)
-)
+var mu = sync.Mutex{}
+var loggers = make(map[System]*slog.Logger)
 
 const (
 	Main        System = "main"
@@ -24,23 +22,20 @@ const (
 	CityAir     System = "cityair"
 )
 
-func Get(name System) *zap.Logger {
-	if log, ok := loggers[name]; ok {
+func Get(name System) *slog.Logger {
+	if log := loggers[name]; log != nil {
 		return log
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if log, ok := loggers[name]; ok {
-		return log
+	log := loggers[name]
+	if log == nil {
+		log = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		log = log.With("sys", name)
+		loggers[name] = log
 	}
 
-	log, err := zap.NewProduction()
-	if err != nil {
-		panic(err)
-	}
-
-	loggers[name] = log.Named(string(name))
-	return loggers[name]
+	return log
 }

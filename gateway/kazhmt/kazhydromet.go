@@ -8,7 +8,6 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
-	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Kazhydromet)
@@ -49,7 +48,7 @@ func (co *collector) scheduleFull() {
 
 func (co *collector) loadAvgs() (map[int64][]average, error) {
 	if err := co.loadStations(); err != nil {
-		log.Error("could not load stations", zap.Error(err))
+		log.Error("could not load stations", "error", err)
 		return nil, err
 	}
 
@@ -65,7 +64,7 @@ func (co *collector) loadAvgs() (map[int64][]average, error) {
 			if rows, err := co.loadHistory(st.Id); err == nil {
 				avgs = append(avgs, rows...)
 			} else {
-				log.Error("unable to load history", zap.Int64("id", st.Id))
+				log.Error("unable to load history", "id", st.Id)
 			}
 		}
 
@@ -93,7 +92,7 @@ func (co *collector) update() ([]data.Measure, error) {
 	for statId, statAvgs := range byStation {
 		stat, ok := co.stations[statId]
 		if !ok {
-			log.Error("station not found", zap.Int64("id", statId))
+			log.Error("station not found", "id", statId)
 			continue
 		}
 
@@ -157,7 +156,7 @@ func (co *collector) loadStations() error {
 	if err != nil {
 		return err
 	}
-	log.Info("loaded stations", zap.Int("count", len(stations)))
+	log.Info("loaded stations", "count", len(stations))
 
 	co.stations = make(map[int64]station)
 
@@ -174,7 +173,7 @@ func (co *collector) collect() {
 			go co.sender.Enqueue(mss)
 			log.Info("kazhydromet updated")
 		} else {
-			log.Error("ukazhydromet update failed", zap.Error(err))
+			log.Error("ukazhydromet update failed", "error", err)
 		}
 		time.Sleep(15 * time.Minute)
 	}

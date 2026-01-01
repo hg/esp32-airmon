@@ -3,6 +3,7 @@ package airkaz
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/tm"
-	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Airkaz)
@@ -101,7 +101,7 @@ func (co *collector) update() error {
 		return err
 	}
 
-	log.Info("loaded measurements", zap.Int("count", len(mss)))
+	log.Info("loaded measurements", "count", len(mss))
 
 	var rows []data.Measure
 	now := time.Now()
@@ -126,7 +126,7 @@ func (co *collector) update() error {
 func (co *collector) collect() {
 	for {
 		if err := co.update(); err != nil {
-			log.Error("unable to load airkaz", zap.Error(err))
+			log.Error("unable to load airkaz", "error", err)
 		} else {
 			log.Info("airkaz updated")
 		}

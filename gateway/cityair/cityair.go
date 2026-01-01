@@ -10,7 +10,6 @@ import (
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/spatial"
-	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.CityAir)
@@ -88,11 +87,11 @@ func (co *collector) loadPosts() []post {
 	var posts []post
 
 	if err := co.client.GetJSON(base+"/posts", &posts); err != nil {
-		log.Error("unable to load posts", zap.Error(err))
+		log.Error("unable to load posts", "error", err)
 		return nil
 	}
 
-	log.Info("loaded posts", zap.Int("count", len(posts)))
+	log.Info("loaded posts", "count", len(posts))
 	return posts
 }
 
@@ -126,8 +125,8 @@ func (co *collector) update() []data.Measure {
 			dist := spatial.Haversine(co.sched.center, post.Geo.toPoint())
 			if dist > 100_000 {
 				log.Debug("skipping remote post",
-					zap.Int("id", post.Id),
-					zap.Float64("distance", dist))
+					"id", post.Id,
+					"distance", dist)
 				continue
 			}
 		}
@@ -137,8 +136,8 @@ func (co *collector) update() []data.Measure {
 
 		if err := co.client.GetJSON(uri, &measure); err != nil {
 			log.Error("unable to load post",
-				zap.Int("postId", post.Id),
-				zap.Error(err))
+				"postId", post.Id,
+				"error", err)
 			continue
 		}
 
@@ -154,8 +153,8 @@ func (co *collector) update() []data.Measure {
 			date, err := parseDate(dateRaw)
 			if err != nil {
 				log.Error("unable to parse date",
-					zap.Any("date", dateRaw),
-					zap.Error(err))
+					"date", dateRaw,
+					"error", err)
 				continue
 			}
 
@@ -227,7 +226,7 @@ func Start(sender *db.Storage, set Settings) {
 			co.sched = &schedule{center: center}
 			co.sched.schedule() // avoid spamming API calls on frequent restarts
 		} else {
-			log.Error("invalid center coordinate", zap.Error(err))
+			log.Error("invalid center coordinate", "error", err)
 		}
 	}
 

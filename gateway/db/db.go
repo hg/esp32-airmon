@@ -7,7 +7,6 @@ import (
 	"github.com/hg/airmon/data"
 	"github.com/hg/airmon/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Database)
@@ -26,13 +25,13 @@ func (st *Storage) save(mss []data.Measure) {
 	for _, ms := range mss {
 		postId, err := st.getPost(ms.Post)
 		if err != nil {
-			log.Error("unable to get post", zap.Error(err))
+			log.Error("unable to get post", "error", err)
 			continue
 		}
 		for _, row := range ms.Rows {
 			obsId, err := st.getObservation(postId, row.Date)
 			if err != nil {
-				log.Error("unable to get observation", zap.Error(err))
+				log.Error("unable to get observation", "error", err)
 				continue
 			}
 			for _, lvl := range row.Level {
@@ -41,7 +40,7 @@ func (st *Storage) save(mss []data.Measure) {
 				if !ok {
 					subId, err = st.getSubstance(sub)
 					if err != nil {
-						log.Error("unable to get substance", zap.Error(err))
+						log.Error("unable to get substance", "error", err)
 						continue
 					}
 					subToId[sub] = subId
@@ -68,11 +67,11 @@ func (st *Storage) receive() {
 				}
 			}
 			log.Info("saved data",
-				zap.String("source", string(mss[0].Post.Source)),
-				zap.Int("measures", len(mss)),
-				zap.Int("observations", observations),
-				zap.Int("levels", levels),
-				zap.Duration("time", spent))
+				"source", mss[0].Post.Source,
+				"measures", len(mss),
+				"observations", observations,
+				"levels", levels,
+				"millis", spent.Milliseconds())
 		}
 	}
 }

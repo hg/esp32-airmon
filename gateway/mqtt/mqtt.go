@@ -10,7 +10,6 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/mon"
-	"go.uber.org/zap"
 )
 
 var log = logger.Get(logger.Mqtt)
@@ -26,11 +25,11 @@ func (se *Settings) validate() error {
 		return errors.New("MQTT broker is empty")
 	}
 	if se.User != "" {
-		log.Info("using username", zap.String("username", se.User))
+		log.Info("using username", "username", se.User)
 	}
 	if se.Pass != "" {
 		log.Info("using MQTT password",
-			zap.String("password", strings.Repeat("*", len(se.Pass))))
+			"password", strings.Repeat("*", len(se.Pass)))
 	}
 	return nil
 }
@@ -50,7 +49,7 @@ func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client
 	opts.SetOnConnectHandler(onConn)
 
 	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
-		log.Info("message received", zap.String("message", string(msg.Payload())))
+		log.Info("message received", "message", string(msg.Payload()))
 	})
 
 	mqttClient := mqtt.NewClient(opts)
@@ -78,28 +77,28 @@ func subscribe(t *topic, client mqtt.Client, sender *db.Storage) {
 	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
 		raw := msg.Payload()
 		if len(raw) == 0 {
-			log.Error("empty message", zap.Uint16("id", msg.MessageID()))
+			log.Error("empty message", "id", msg.MessageID())
 			return
 		}
 		if mss, err := t.mapper(raw); err == nil {
 			go sender.Enqueue(mss)
 		} else {
 			log.Error("could not parse data",
-				zap.String("topic", t.topic),
-				zap.Error(err))
+				"topic", t.topic,
+				"error", err)
 		}
 	})
 
 	if token.Wait() && token.Error() != nil {
 		log.Error("could not subscribe to mqtt",
-			zap.String("topic", t.topic),
-			zap.Error(token.Error()))
+			"topic", t.topic,
+			"error", token.Error())
 	}
 }
 
 func (h *connHandler) onConnect(client mqtt.Client) {
 	for _, t := range topics {
-		log.Info("subscribing to topic", zap.String("topic", t.topic))
+		log.Info("subscribing to topic", "topic", t.topic)
 		go subscribe(t, client, h.sender)
 	}
 }
