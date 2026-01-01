@@ -16,7 +16,6 @@ const (
 	Airkaz      System = "airkaz"
 	Database    System = "database"
 	Kazhydromet System = "kazhydromet"
-	Time        System = "time"
 	Mqtt        System = "mqtt"
 	Net         System = "net"
 	CityAir     System = "cityair"

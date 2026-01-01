@@ -3,7 +3,6 @@ package airkaz
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
-	"github.com/hg/airmon/tm"
 )
 
 var log = logger.Get(logger.Airkaz)
@@ -30,7 +28,7 @@ type measurement struct {
 	Pressure *float32 `json:"press,string"`
 	Error    int64    `json:"error,string"`
 	Status   string   `json:"status"`
-	Date     tm.Time  `json:"date"`
+	Date     noTz     `json:"date"`
 	Hour     string   `json:"hour"`
 }
 

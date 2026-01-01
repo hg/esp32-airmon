@@ -1,11 +1,9 @@
-package tm
+package airkaz
 
 import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/hg/airmon/logger"
 )
 
 const (
@@ -13,9 +11,7 @@ const (
 	tzName     = "Asia/Almaty"
 )
 
-var log = logger.Get(logger.Time)
-
-type Time struct {
+type noTz struct {
 	time.Time
 }
 
@@ -29,7 +25,7 @@ func init() {
 	}
 }
 
-func (t *Time) MarshalJSON() ([]byte, error) {
+func (t *noTz) MarshalJSON() ([]byte, error) {
 	if t == nil {
 		return []byte("null"), nil
 	}
@@ -37,7 +33,7 @@ func (t *Time) MarshalJSON() ([]byte, error) {
 	return []byte(formatted), nil
 }
 
-func (t *Time) UnmarshalJSON(b []byte) (err error) {
+func (t *noTz) UnmarshalJSON(b []byte) (err error) {
 	s := strings.Trim(string(b), `"`)
 	if s == "null" {
 		t.Time = time.Time{}
