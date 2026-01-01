@@ -117,8 +117,14 @@ func (co *collector) update() []data.Measure {
 
 	var measure measure
 
-	since := time.Now().Add(-6 * time.Hour)
 	partial := co.isPartialUpdate()
+
+	since := time.Now().UTC()
+	if partial {
+		since = since.Add(-time.Hour)
+	} else {
+		since = since.Add(-9 * time.Hour)
+	}
 
 	for _, post := range posts {
 		if partial {
