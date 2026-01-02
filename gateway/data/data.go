@@ -1,6 +1,10 @@
 package data
 
-import "time"
+import (
+	"time"
+
+	"github.com/hg/airmon/spatial"
+)
 
 type Source string
 
@@ -16,8 +20,7 @@ type Post struct {
 	Name    string
 	City    string
 	Address string
-	Lon     float32
-	Lat     float32
+	Geo     spatial.Point
 }
 
 type Level struct {

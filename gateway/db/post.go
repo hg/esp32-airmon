@@ -2,7 +2,6 @@ package db
 
 import (
 	"github.com/hg/airmon/data"
-
 	"github.com/jackc/pgx/v5"
 )
 
@@ -16,15 +15,15 @@ const sqlAddPost = `
 `
 
 func (st *Storage) addPost(post data.Post) (int, error) {
-	locId, err := st.getLocality(post.City)
+	locId, err := st.getLocality(post.City, post.Geo)
 	if err != nil {
 		return 0, err
 	}
 	var id int
 	err = st.con.QueryRow(st.ctx, sqlAddPost,
 		post.Name,    // $1
-		post.Lat,     // $2
-		post.Lon,     // $3
+		post.Geo.Lat, // $2
+		post.Geo.Lon, // $3
 		post.Address, // $4
 		locId,        // $5
 		post.Source,  // $6

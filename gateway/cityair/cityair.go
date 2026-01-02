@@ -48,8 +48,8 @@ func (fu *schedule) schedule() {
 
 func (g *geo) toPoint() spatial.Point {
 	return spatial.Point{
-		Lat: float64(g.Lat),
-		Lon: float64(g.Lon),
+		Lat: g.Lat,
+		Lon: g.Lon,
 	}
 }
 
@@ -193,8 +193,10 @@ func (co *collector) update() []data.Measure {
 				Post: data.Post{
 					Source: data.CityAir,
 					Name:   post.Name,
-					Lon:    post.Geo.Lon,
-					Lat:    post.Geo.Lat,
+					Geo: spatial.Point{
+						Lat: post.Geo.Lat,
+						Lon: post.Geo.Lon,
+					},
 				},
 				Rows: obss,
 			})
@@ -215,7 +217,7 @@ func (co *collector) collect() {
 
 type Settings struct {
 	Token  string     `json:"token"`
-	Center [2]float64 `json:"center"`
+	Center [2]float32 `json:"center"`
 }
 
 func Start(sender *db.Storage, set Settings) {

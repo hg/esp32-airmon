@@ -10,6 +10,7 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
+	"github.com/hg/airmon/spatial"
 )
 
 var log = logger.Get(logger.Airkaz)
@@ -81,8 +82,10 @@ func (ms *measurement) convert() data.Measure {
 			Source: data.Airkaz,
 			Name:   ms.City + ":" + ms.Name, // TODO: legacy data
 			City:   ms.City,
-			Lon:    ms.Lng,
-			Lat:    ms.Lat,
+			Geo: spatial.Point{
+				Lat: ms.Lat,
+				Lon: ms.Lng,
+			},
 		},
 		Rows: []data.Observation{
 			{

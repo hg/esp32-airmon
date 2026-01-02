@@ -8,6 +8,7 @@ import (
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
 	"github.com/hg/airmon/net"
+	"github.com/hg/airmon/spatial"
 )
 
 var log = logger.Get(logger.Kazhydromet)
@@ -121,8 +122,10 @@ func (co *collector) update() ([]data.Measure, error) {
 				Name:    fmt.Sprintf("(КГМ) %s (%d)", stat.NameRu, stat.Id), // TODO: legacy data
 				City:    stat.CityRu,
 				Address: stat.AddressRu,
-				Lon:     stat.Longitude,
-				Lat:     stat.Latitude,
+				Geo: spatial.Point{
+					Lat: stat.Latitude,
+					Lon: stat.Longitude,
+				},
 			},
 			Rows: rows,
 		})

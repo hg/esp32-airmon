@@ -5,7 +5,7 @@ import (
 )
 
 type Point struct {
-	Lat, Lon float64
+	Lat, Lon float32
 }
 
 func (pt *Point) IsValid() bool {
@@ -15,8 +15,8 @@ func (pt *Point) IsValid() bool {
 
 const earthRadiusMeters = 6_371_000.0
 
-func radians(deg float64) float64 {
-	return deg * math.Pi / 180.0
+func radians(deg float32) float64 {
+	return float64(deg) * math.Pi / 180.0
 }
 
 func Haversine(one, two Point) float64 {
