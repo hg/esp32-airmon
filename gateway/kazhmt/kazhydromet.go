@@ -13,7 +13,7 @@ import (
 var log = logger.Get(logger.Kazhydromet)
 
 type Settings struct {
-	Token string
+	Token string `json:"token"`
 }
 
 type average struct {

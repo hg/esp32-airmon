@@ -1,0 +1,19 @@
+{
+	"mqtt": {
+		"broker": "tcp://localhost:1883",
+		"user": "",
+		"pass": ""
+	},
+	"db": {
+		"uri": "postgres://air:air@localhost:5432/air"
+	},
+	"sources": {
+		"cityair": {
+			"token": "example-token",
+			"center": [49.9549, 82.6154]
+		},
+		"kazhmt": {
+			"token": "example-token"
+		}
+	}
+}

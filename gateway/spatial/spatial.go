@@ -1,12 +1,16 @@
 package spatial
 
 import (
-	"fmt"
 	"math"
 )
 
 type Point struct {
 	Lat, Lon float64
+}
+
+func (pt *Point) IsValid() bool {
+	return pt.Lat >= -90 && pt.Lat <= 90 &&
+		pt.Lon >= -180 && pt.Lon <= 180
 }
 
 const earthRadiusMeters = 6_371_000.0
@@ -29,16 +33,4 @@ func Haversine(one, two Point) float64 {
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 
 	return earthRadiusMeters * c
-}
-
-func ParsePoint(from string) (Point, error) {
-	var pt Point
-	_, err := fmt.Sscanf(from, "%f,%f", &pt.Lat, &pt.Lon)
-	if err != nil {
-		return pt, err
-	}
-	if pt.Lat < -90 || pt.Lat > 90 || pt.Lon < -180 || pt.Lon > 180 {
-		return pt, fmt.Errorf("invalid point %f,%f", pt.Lat, pt.Lon)
-	}
-	return pt, nil
 }

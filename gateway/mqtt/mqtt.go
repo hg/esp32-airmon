@@ -15,35 +15,31 @@ import (
 var log = logger.Get(logger.Mqtt)
 
 type Settings struct {
-	Broker string
-	User   string
-	Pass   string
+	Broker string `json:"broker"`
+	User   string `json:"user"`
+	Pass   string `json:"pass"`
 }
 
 func (se *Settings) validate() error {
 	if se.Broker == "" {
 		return errors.New("MQTT broker is empty")
 	}
-	if se.User != "" {
-		log.Info("using username", "username", se.User)
-	}
-	if se.Pass != "" {
-		log.Info("using MQTT password",
-			"password", strings.Repeat("*", len(se.Pass)))
-	}
 	return nil
 }
 
-func newMqttClient(settings *Settings, onConn mqtt.OnConnectHandler) mqtt.Client {
+func newMqttClient(set Settings, onConn mqtt.OnConnectHandler) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.SetResumeSubs(true)
-	opts.AddBroker(settings.Broker)
+	opts.AddBroker(set.Broker)
 
-	if settings.User != "" {
-		opts.SetUsername(settings.User)
+	if set.User != "" {
+		log.Info("using username", "user", set.User)
+		opts.SetUsername(set.User)
 	}
-	if settings.Pass != "" {
-		opts.SetPassword(settings.Pass)
+	if set.Pass != "" {
+		mask := strings.Repeat("*", len(set.Pass))
+		log.Info("using password", "pass", mask)
+		opts.SetPassword(set.Pass)
 	}
 
 	opts.SetOnConnectHandler(onConn)
@@ -103,13 +99,13 @@ func (h *connHandler) onConnect(client mqtt.Client) {
 	}
 }
 
-func Start(settings *Settings, sender *db.Storage) error {
-	if err := settings.validate(); err != nil {
-		return err
+func Start(set Settings, save *db.Storage) error {
+	if set.Broker == "" {
+		return errors.New("MQTT broker is empty")
 	}
 
-	handler := connHandler{sender}
-	client := newMqttClient(settings, handler.onConnect)
+	handler := connHandler{save}
+	client := newMqttClient(set, handler.onConnect)
 
 	token := client.Connect()
 	if token.Wait() && token.Error() != nil {

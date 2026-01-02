@@ -214,8 +214,8 @@ func (co *collector) collect() {
 }
 
 type Settings struct {
-	Token  string
-	LatLon string
+	Token  string     `json:"token"`
+	Center [2]float64 `json:"center"`
 }
 
 func Start(sender *db.Storage, set Settings) {
@@ -226,14 +226,15 @@ func Start(sender *db.Storage, set Settings) {
 	}
 	co.client.SetHeader("Authorization", "Bearer "+set.Token)
 
-	if set.LatLon != "" {
-		center, err := spatial.ParsePoint(set.LatLon)
-		if err == nil {
-			co.sched = &schedule{center: center}
-			co.sched.schedule() // avoid spamming API calls on frequent restarts
-		} else {
-			log.Error("invalid center coordinate", "error", err)
-		}
+	center := spatial.Point{
+		Lat: set.Center[0],
+		Lon: set.Center[1],
+	}
+	if center.IsValid() {
+		co.sched = &schedule{center: center}
+		co.sched.schedule() // avoid spamming API calls on frequent restarts
+	} else {
+		log.Error("invalid center coordinate", "error", set.Center)
 	}
 
 	go co.collect()

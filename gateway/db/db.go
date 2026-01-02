@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/hg/airmon/data"
@@ -97,12 +98,16 @@ func (st *Storage) Enqueue(measures []data.Measure) bool {
 	}
 }
 
-func NewStorage(settings Settings) (*Storage, error) {
-	if err := settings.validate(); err != nil {
-		return nil, err
+type Settings struct {
+	Uri string `json:"uri"`
+}
+
+func NewStorage(set Settings) (*Storage, error) {
+	if set.Uri == "" {
+		return nil, errors.New("PostgreSQL URI not set")
 	}
 
-	con, err := pgxpool.New(context.Background(), settings.Uri)
+	con, err := pgxpool.New(context.Background(), set.Uri)
 	if err != nil {
 		return nil, err
 	}
