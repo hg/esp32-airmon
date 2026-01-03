@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/hg/airmon/data"
@@ -18,6 +19,7 @@ var log = logger.Get(logger.Airkaz)
 var dataRe = regexp.MustCompile(`(?si)<script.*>.*sensors_data\s*=\s*(\[.+])</script`)
 
 type measurement struct {
+	PostId   int64    `json:"id,string"`
 	City     string   `json:"city"`
 	Name     string   `json:"name"`
 	Lat      float32  `json:"lat,string"`
@@ -80,7 +82,8 @@ func (ms *measurement) convert() data.Measure {
 	return data.Measure{
 		Post: data.Post{
 			Source: data.Airkaz,
-			Name:   ms.City + ":" + ms.Name, // TODO: legacy data
+			Name:   ms.Name,
+			Slug:   strconv.FormatInt(ms.PostId, 10),
 			City:   ms.City,
 			Geo: spatial.Point{
 				Lat: ms.Lat,

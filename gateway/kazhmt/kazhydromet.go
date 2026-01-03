@@ -118,8 +118,10 @@ func (co *collector) update() ([]data.Measure, error) {
 
 		result = append(result, data.Measure{
 			Post: data.Post{
-				Source:  data.Kazhydromet,
-				Name:    fmt.Sprintf("(КГМ) %s (%d)", stat.NameRu, stat.Id), // TODO: legacy data
+				Source: data.Kazhydromet,
+				Name:   stat.NameRu,
+				// source likes reusing IDs for unrelated posts
+				Slug:    fmt.Sprintf("%s_%d", stat.NameRu, stat.Id),
 				City:    stat.CityRu,
 				Address: stat.AddressRu,
 				Geo: spatial.Point{

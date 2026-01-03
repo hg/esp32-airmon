@@ -24,6 +24,7 @@ func ParseTemp(raw []byte) ([]data.Measure, error) {
 			Post: data.Post{
 				Source: data.Custom,
 				Name:   ms.Device,
+				Slug:   ms.Device,
 			},
 			Rows: []data.Observation{
 				{

@@ -3,6 +3,7 @@ package cityair
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/hg/airmon/data"
@@ -193,6 +194,7 @@ func (co *collector) update() []data.Measure {
 				Post: data.Post{
 					Source: data.CityAir,
 					Name:   post.Name,
+					Slug:   strconv.Itoa(post.Id),
 					Geo: spatial.Point{
 						Lat: post.Geo.Lat,
 						Lon: post.Geo.Lon,

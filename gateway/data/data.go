@@ -18,6 +18,7 @@ const (
 type Post struct {
 	Source  Source
 	Name    string
+	Slug    string
 	City    string
 	Address string
 	Geo     spatial.Point
