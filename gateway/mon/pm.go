@@ -17,16 +17,7 @@ type parts struct {
 	Device string  `json:"dev"`
 	Time   int64   `json:"time"`
 	Sensor string  `json:"sens"`
-	Std    density `json:"std"`
 	Atm    density `json:"atm"`
-	Count  struct {
-		Pm03 uint16 `json:"pm0.3"`
-		Pm05 uint16 `json:"pm0.5"`
-		Pm1  uint16 `json:"pm1"`
-		Pm25 uint16 `json:"pm2.5"`
-		Pm5  uint16 `json:"pm5"`
-		Pm10 uint16 `json:"pm10"`
-	} `json:"cnt"`
 }
 
 func ParsePM(raw []byte) ([]data.Measure, error) {

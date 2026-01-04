@@ -29,7 +29,7 @@ func (t *noTz) MarshalJSON() ([]byte, error) {
 	if t == nil {
 		return []byte("null"), nil
 	}
-	formatted := t.Format(timeFormat)
+	formatted := `"` + t.Format(timeFormat) + `"`
 	return []byte(formatted), nil
 }
 
