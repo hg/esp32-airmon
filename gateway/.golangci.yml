@@ -1,0 +1,14 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - govet
+    - revive
+  exclusions:
+    presets:
+      - comments
+formatters:
+  enable:
+    - gofmt
+    - goimports
+

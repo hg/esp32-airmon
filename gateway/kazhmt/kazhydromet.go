@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hg/airmon/client"
 	"github.com/hg/airmon/data"
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
-	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/spatial"
 )
 
@@ -18,16 +18,16 @@ type Settings struct {
 }
 
 type average struct {
-	Id        string    `json:"id"`
+	ID        string    `json:"id"`
 	Value     float32   `json:"value"`
 	Date      time.Time `json:"date"`
-	StationId int64     `json:"stationId"`
+	StationID int64     `json:"stationId"`
 	Code      string    `json:"code"`
 	Unit      string    `json:"unit"`
 }
 
 type station struct {
-	Id        int64   `json:"id"`
+	ID        int64   `json:"id"`
 	NameRu    string  `json:"nameRu"`
 	Longitude float32 `json:"longitude"`
 	Latitude  float32 `json:"latitude"`
@@ -36,7 +36,7 @@ type station struct {
 }
 
 type collector struct {
-	client   *net.Client
+	client   *client.Client
 	sender   *db.Storage
 	token    string
 	stations map[int64]station
@@ -62,10 +62,10 @@ func (co *collector) loadAvgs() (map[int64][]average, error) {
 		log.Info("starting kazhydromet history refresh")
 
 		for _, st := range co.stations {
-			if rows, err := co.loadHistory(st.Id); err == nil {
+			if rows, err := co.loadHistory(st.ID); err == nil {
 				avgs = append(avgs, rows...)
 			} else {
-				log.Error("unable to load history", "id", st.Id)
+				log.Error("unable to load history", "id", st.ID)
 			}
 		}
 
@@ -75,7 +75,7 @@ func (co *collector) loadAvgs() (map[int64][]average, error) {
 	byStation := make(map[int64][]average)
 
 	for _, avg := range avgs {
-		id := avg.StationId
+		id := avg.StationID
 		byStation[id] = append(byStation[id], avg)
 	}
 
@@ -90,10 +90,10 @@ func (co *collector) update() ([]data.Measure, error) {
 
 	var result []data.Measure
 
-	for statId, statAvgs := range byStation {
-		stat, ok := co.stations[statId]
+	for statID, statAvgs := range byStation {
+		stat, ok := co.stations[statID]
 		if !ok {
-			log.Error("station not found", "id", statId)
+			log.Error("station not found", "id", statID)
 			continue
 		}
 
@@ -121,7 +121,7 @@ func (co *collector) update() ([]data.Measure, error) {
 				Source: data.Kazhydromet,
 				Name:   stat.NameRu,
 				// source likes reusing IDs for unrelated posts
-				Slug:    fmt.Sprintf("%s_%d", stat.NameRu, stat.Id),
+				Slug:    fmt.Sprintf("%s_%d", stat.NameRu, stat.ID),
 				City:    stat.CityRu,
 				Address: stat.AddressRu,
 				Geo: spatial.Point{
@@ -142,10 +142,10 @@ func (co *collector) loadData(uri string) ([]average, error) {
 	return ms, err
 }
 
-func (co *collector) loadHistory(stationId int64) ([]average, error) {
+func (co *collector) loadHistory(stationID int64) ([]average, error) {
 	since := time.Now().Add(-24 * time.Hour)
 	uri := fmt.Sprintf("http://atmosphera.kz:4003/simple/averages?key=%s&after=%s&stationNumber=%d",
-		co.token, since.Format("2006-01-02"), stationId)
+		co.token, since.Format("2006-01-02"), stationID)
 	return co.loadData(uri)
 }
 
@@ -166,7 +166,7 @@ func (co *collector) loadStations() error {
 	co.stations = make(map[int64]station)
 
 	for _, stat := range stations {
-		co.stations[stat.Id] = stat
+		co.stations[stat.ID] = stat
 	}
 
 	return nil
@@ -191,7 +191,7 @@ func (co *collector) collect() {
 
 func Start(sender *db.Storage, set Settings) {
 	co := collector{
-		client: net.NewProxiedClient(),
+		client: client.NewProxied(),
 		sender: sender,
 		token:  set.Token,
 	}

@@ -8,8 +8,10 @@ import (
 
 type System string
 
-var mu = sync.Mutex{}
-var loggers = make(map[System]*slog.Logger)
+var (
+	mu      = sync.Mutex{}
+	loggers = make(map[System]*slog.Logger)
+)
 
 const (
 	Main        System = "main"

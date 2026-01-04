@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hg/airmon/client"
 	"github.com/hg/airmon/data"
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
-	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/spatial"
 )
 
@@ -23,7 +23,7 @@ type schedule struct {
 }
 
 type collector struct {
-	client *net.Client
+	client *client.Client
 	sender *db.Storage
 	sched  *schedule
 }
@@ -34,7 +34,7 @@ type geo struct {
 }
 
 type post struct {
-	Id   int    `json:"id"`
+	ID   int    `json:"id"`
 	Name string `json:"name"`
 	Geo  geo    `json:"geo"`
 }
@@ -132,18 +132,18 @@ func (co *collector) update() []data.Measure {
 			dist := spatial.Haversine(co.sched.center, post.Geo.toPoint())
 			if dist > 100_000 {
 				log.Debug("skipping remote post",
-					"id", post.Id,
+					"id", post.ID,
 					"distance", dist)
 				continue
 			}
 		}
 
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
-			base, post.Id, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
+			base, post.ID, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
 
 		if err := co.client.GetJSON(uri, &measure); err != nil {
 			log.Error("unable to load post",
-				"postId", post.Id,
+				"postId", post.ID,
 				"error", err)
 			continue
 		}
@@ -194,7 +194,7 @@ func (co *collector) update() []data.Measure {
 				Post: data.Post{
 					Source: data.CityAir,
 					Name:   post.Name,
-					Slug:   strconv.Itoa(post.Id),
+					Slug:   strconv.Itoa(post.ID),
 					Geo: spatial.Point{
 						Lat: post.Geo.Lat,
 						Lon: post.Geo.Lon,
@@ -224,7 +224,7 @@ type Settings struct {
 
 func Start(sender *db.Storage, set Settings) {
 	co := &collector{
-		client: net.NewProxiedClient(),
+		client: client.NewProxied(),
 		sender: sender,
 		sched:  nil,
 	}

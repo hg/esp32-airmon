@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hg/airmon/client"
 	"github.com/hg/airmon/data"
 	"github.com/hg/airmon/db"
 	"github.com/hg/airmon/logger"
-	"github.com/hg/airmon/net"
 	"github.com/hg/airmon/spatial"
 )
 
@@ -19,7 +19,7 @@ var log = logger.Get(logger.Airkaz)
 var dataRe = regexp.MustCompile(`(?si)<script.*>.*sensors_data\s*=\s*(\[.+])</script`)
 
 type measurement struct {
-	PostId   int64    `json:"id,string"`
+	PostID   int64    `json:"id,string"`
 	City     string   `json:"city"`
 	Name     string   `json:"name"`
 	Lat      float32  `json:"lat,string"`
@@ -37,7 +37,7 @@ type measurement struct {
 
 type collector struct {
 	sender *db.Storage
-	client *net.Client
+	client *client.Client
 }
 
 func (co *collector) load() ([]measurement, error) {
@@ -83,7 +83,7 @@ func (ms *measurement) convert() data.Measure {
 		Post: data.Post{
 			Source: data.Airkaz,
 			Name:   ms.Name,
-			Slug:   strconv.FormatInt(ms.PostId, 10),
+			Slug:   strconv.FormatInt(ms.PostID, 10),
 			City:   ms.City,
 			Geo: spatial.Point{
 				Lat: ms.Lat,
@@ -115,7 +115,7 @@ func (co *collector) update() error {
 			continue
 		}
 		// adjust incorrect timezone
-		if ms.Date.Time.After(now) {
+		if ms.Date.After(now) {
 			ms.Date.Time = ms.Date.Add(-time.Hour)
 		}
 		if row := ms.convert(); len(row.Rows) > 0 {
@@ -141,7 +141,7 @@ func (co *collector) collect() {
 func Start(sender *db.Storage) {
 	co := collector{
 		sender: sender,
-		client: net.NewProxiedClient(),
+		client: client.NewProxied(),
 	}
 	go co.collect()
 }

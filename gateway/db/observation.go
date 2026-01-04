@@ -12,9 +12,9 @@ const sqlAddObservation = `
 	RETURNING id
 `
 
-func (st *Storage) addObservation(postId int, date time.Time) (int, error) {
+func (st *Storage) addObservation(postID int, date time.Time) (int, error) {
 	var id int
-	err := st.con.QueryRow(st.ctx, sqlAddObservation, postId, date).Scan(&id)
+	err := st.con.QueryRow(st.ctx, sqlAddObservation, postID, date).Scan(&id)
 	return id, err
 }
 
@@ -26,11 +26,11 @@ const sqlGetObservation = `
 	LIMIT 1
 `
 
-func (st *Storage) getObservation(postId int, date time.Time) (int, error) {
+func (st *Storage) getObservation(postID int, date time.Time) (int, error) {
 	var id int
-	err := st.con.QueryRow(st.ctx, sqlGetObservation, postId, date).Scan(&id)
+	err := st.con.QueryRow(st.ctx, sqlGetObservation, postID, date).Scan(&id)
 	if err == pgx.ErrNoRows {
-		id, err = st.addObservation(postId, date)
+		id, err = st.addObservation(postID, date)
 	}
 	return id, err
 }

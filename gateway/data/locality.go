@@ -5,8 +5,10 @@ import (
 	"strings"
 )
 
-var reSpace = regexp.MustCompile(`\s+`)
-var reLocality = regexp.MustCompile(`(?i)([пс]\.)|(пос[её]ло?к|село)\s*`)
+var (
+	reSpace    = regexp.MustCompile(`\s+`)
+	reLocality = regexp.MustCompile(`(?i)([пс]\.)|(пос[её]ло?к|село)\s*`)
+)
 
 func NormalizeLocality(name string) string {
 	name = reLocality.ReplaceAllString(name, "")

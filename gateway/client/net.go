@@ -1,4 +1,4 @@
-package net
+package client
 
 import (
 	"context"
@@ -37,38 +37,18 @@ func randomUserAgent() string {
 	return userAgents[rand.Intn(len(userAgents))]
 }
 
-func NewProxiedClient() *Client {
-	proxyDialer := proxy.FromEnvironmentUsing(&net.Dialer{
-		Timeout:   180 * time.Second,
-		KeepAlive: 180 * time.Second,
-	})
-	return &Client{
-		headers: make(map[string]string),
-		client: &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return proxyDialer.Dial(network, addr)
-				},
-				MaxIdleConns:        1,
-				IdleConnTimeout:     1 * time.Minute,
-				TLSHandshakeTimeout: 10 * time.Second,
-			},
-		},
-	}
-}
-
-func baseDomain(fullUrl string) string {
-	if parsed, err := url.Parse(fullUrl); err != nil {
+func baseDomain(full string) string {
+	parsed, err := url.Parse(full)
+	if err != nil {
 		return ""
-	} else {
-		parsed.Opaque = ""
-		parsed.Path = ""
-		parsed.RawQuery = ""
-		parsed.ForceQuery = false
-		parsed.Fragment = ""
-		parsed.RawFragment = ""
-		return parsed.String()
 	}
+	parsed.Opaque = ""
+	parsed.Path = ""
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	return parsed.String()
 }
 
 func (c *Client) get(uri string, accept string) ([]byte, error) {
@@ -125,4 +105,24 @@ func (c *Client) GetJSON(uri string, buf any) error {
 
 func (c *Client) SetHeader(key string, val string) {
 	c.headers[key] = val
+}
+
+func NewProxied() *Client {
+	dialer := proxy.FromEnvironmentUsing(&net.Dialer{
+		Timeout:   180 * time.Second,
+		KeepAlive: 180 * time.Second,
+	})
+	return &Client{
+		headers: make(map[string]string),
+		client: &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(_ context.Context, network, addr string) (net.Conn, error) {
+					return dialer.Dial(network, addr)
+				},
+				MaxIdleConns:        1,
+				IdleConnTimeout:     1 * time.Minute,
+				TLSHandshakeTimeout: 10 * time.Second,
+			},
+		},
+	}
 }

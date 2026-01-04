@@ -15,7 +15,7 @@ const sqlAddPost = `
 `
 
 func (st *Storage) addPost(post data.Post) (int, error) {
-	locId, err := st.getLocality(post.City, post.Geo)
+	locID, err := st.getLocality(post.City, post.Geo)
 	if err != nil {
 		return 0, err
 	}
@@ -25,7 +25,7 @@ func (st *Storage) addPost(post data.Post) (int, error) {
 		post.Geo.Lat, // $2
 		post.Geo.Lon, // $3
 		post.Address, // $4
-		locId,        // $5
+		locID,        // $5
 		post.Slug,    // $6
 		post.Source,  // $7
 	).Scan(&id)

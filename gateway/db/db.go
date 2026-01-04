@@ -21,33 +21,33 @@ type Storage struct {
 func (st *Storage) save(mss []data.Measure) {
 	// Substances can disappear or be changed at any moment,
 	// cache them only for the duration of the batch
-	subToId := make(map[string]int)
+	subToID := make(map[string]int)
 
 	for _, ms := range mss {
-		postId, err := st.getPost(ms.Post)
+		postID, err := st.getPost(ms.Post)
 		if err != nil {
 			log.Error("unable to get post", "error", err)
 			continue
 		}
 		for _, row := range ms.Rows {
-			obsId, err := st.getObservation(postId, row.Date)
+			obsID, err := st.getObservation(postID, row.Date)
 			if err != nil {
 				log.Error("unable to get observation", "error", err)
 				continue
 			}
 			for _, lvl := range row.Level {
 				sub := data.NormalizeSubstance(lvl.Substance)
-				subId, ok := subToId[sub]
+				subID, ok := subToID[sub]
 				if !ok {
-					subId, err = st.getSubstance(sub)
+					subID, err = st.getSubstance(sub)
 					if err != nil {
 						log.Error("unable to get substance", "error", err)
 						continue
 					}
-					subToId[sub] = subId
+					subToID[sub] = subID
 				}
 				value := data.ConvertUnit(lvl.Value, lvl.Unit)
-				st.addLevel(obsId, subId, value)
+				st.addLevel(obsID, subID, value)
 			}
 		}
 	}
@@ -93,21 +93,21 @@ func (st *Storage) Enqueue(measures []data.Measure) bool {
 				log.Error("unable to send measures, discarding")
 				return false
 			}
-			_ = <-st.ch // drop the oldest measurement and try
+			<-st.ch // drop the oldest measurement and try
 		}
 	}
 }
 
 type Settings struct {
-	Uri string `json:"uri"`
+	URI string `json:"uri"`
 }
 
 func NewStorage(set Settings) (*Storage, error) {
-	if set.Uri == "" {
+	if set.URI == "" {
 		return nil, errors.New("PostgreSQL URI not set")
 	}
 
-	con, err := pgxpool.New(context.Background(), set.Uri)
+	con, err := pgxpool.New(context.Background(), set.URI)
 	if err != nil {
 		return nil, err
 	}

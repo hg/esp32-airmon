@@ -20,13 +20,6 @@ type Settings struct {
 	Pass   string `json:"pass"`
 }
 
-func (se *Settings) validate() error {
-	if se.Broker == "" {
-		return errors.New("MQTT broker is empty")
-	}
-	return nil
-}
-
 func newMqttClient(set Settings, onConn mqtt.OnConnectHandler) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.SetResumeSubs(true)
@@ -44,7 +37,7 @@ func newMqttClient(set Settings, onConn mqtt.OnConnectHandler) mqtt.Client {
 
 	opts.SetOnConnectHandler(onConn)
 
-	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
+	opts.SetDefaultPublishHandler(func(_ mqtt.Client, msg mqtt.Message) {
 		log.Info("message received", "message", string(msg.Payload()))
 	})
 
@@ -70,7 +63,7 @@ var topics = []*topic{
 }
 
 func subscribe(t *topic, client mqtt.Client, sender *db.Storage) {
-	token := client.Subscribe(t.topic, 0, func(client mqtt.Client, msg mqtt.Message) {
+	token := client.Subscribe(t.topic, 0, func(_ mqtt.Client, msg mqtt.Message) {
 		raw := msg.Payload()
 		if len(raw) == 0 {
 			log.Error("empty message", "id", msg.MessageID())
