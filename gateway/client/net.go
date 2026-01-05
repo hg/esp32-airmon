@@ -109,8 +109,7 @@ func (c *Client) SetHeader(key string, val string) {
 
 func NewProxied() *Client {
 	dialer := proxy.FromEnvironmentUsing(&net.Dialer{
-		Timeout:   180 * time.Second,
-		KeepAlive: 180 * time.Second,
+		Timeout: 15 * time.Second,
 	})
 	return &Client{
 		headers: make(map[string]string),
@@ -119,9 +118,6 @@ func NewProxied() *Client {
 				DialContext: func(_ context.Context, network, addr string) (net.Conn, error) {
 					return dialer.Dial(network, addr)
 				},
-				MaxIdleConns:        1,
-				IdleConnTimeout:     1 * time.Minute,
-				TLSHandshakeTimeout: 10 * time.Second,
 			},
 		},
 	}
