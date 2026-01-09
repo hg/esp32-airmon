@@ -14,12 +14,12 @@ const sqlAddPost = `
 	RETURNING id
 `
 
-func (st *Storage) addPost(post data.Post) (int, error) {
+func (st *Storage) addPost(post data.Post) (data.PostID, error) {
 	locID, err := st.getLocality(post.City, post.Geo)
 	if err != nil {
 		return 0, err
 	}
-	var id int
+	var id data.PostID
 	err = st.con.QueryRow(st.ctx, sqlAddPost,
 		post.Name,    // $1
 		post.Geo.Lat, // $2
@@ -41,8 +41,8 @@ const sqlGetPost = `
 	LIMIT 1
 `
 
-func (st *Storage) getPost(post data.Post) (int, error) {
-	var id int
+func (st *Storage) GetPost(post data.Post) (data.PostID, error) {
+	var id data.PostID
 	err := st.con.QueryRow(st.ctx, sqlGetPost, post.Slug, post.Source).Scan(&id)
 	if err == pgx.ErrNoRows {
 		id, err = st.addPost(post)

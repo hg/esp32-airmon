@@ -24,7 +24,7 @@ type schedule struct {
 
 type collector struct {
 	client *client.Client
-	sender *db.Storage
+	store  *db.Storage
 	sched  *schedule
 }
 
@@ -109,23 +109,14 @@ func (co *collector) isPartialUpdate() bool {
 }
 
 func (co *collector) update() []data.Measure {
-	var result []data.Measure
-
 	posts := co.loadPosts()
 	if len(posts) == 0 {
 		return nil
 	}
 
-	var measure measure
+	var result []data.Measure
 
 	partial := co.isPartialUpdate()
-
-	since := time.Now().UTC()
-	if partial {
-		since = since.Add(-time.Hour)
-	} else {
-		since = since.Add(-9 * time.Hour)
-	}
 
 	for _, post := range posts {
 		if partial {
@@ -138,10 +129,36 @@ func (co *collector) update() []data.Measure {
 			}
 		}
 
+		postID, err := co.store.GetPost(data.Post{
+			Source: data.CityAir,
+			Name:   post.Name,
+			Slug:   strconv.Itoa(post.ID),
+			Geo: spatial.Point{
+				Lat: post.Geo.Lat,
+				Lon: post.Geo.Lon,
+			},
+		})
+
+		if err != nil {
+			log.Error("unable to find post", "error", err)
+			continue
+		}
+
+		since, err := co.store.GetLastAt(postID)
+
+		if err != nil || since.Equal(db.Epoch) {
+			if err != nil {
+				log.Error("unable to get last measurement", "error", err)
+			}
+			since = time.Now().Add(-12 * time.Hour)
+		}
+
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
 			base, post.ID, url.QueryEscape(since.Format("2006-01-02 15:04:05Z")))
 
-		if err := co.client.GetJSON(uri, &measure); err != nil {
+		var ms measure
+
+		if err := co.client.GetJSON(uri, &ms); err != nil {
 			log.Error("unable to load post",
 				"postId", post.ID,
 				"error", err)
@@ -150,7 +167,7 @@ func (co *collector) update() []data.Measure {
 
 		var obss []data.Observation
 
-		for _, values := range measure.Data {
+		for _, values := range ms.Data {
 			dateRaw, ok := values["date"]
 			if !ok {
 				log.Error("date not found in measurement")
@@ -167,7 +184,7 @@ func (co *collector) update() []data.Measure {
 
 			var level []data.Level
 
-			for sub, unit := range measure.Meta.Units {
+			for sub, unit := range ms.Meta.Units {
 				raw, ok := values[sub]
 				if !ok {
 					continue
@@ -191,16 +208,8 @@ func (co *collector) update() []data.Measure {
 
 		if len(obss) > 0 {
 			result = append(result, data.Measure{
-				Post: data.Post{
-					Source: data.CityAir,
-					Name:   post.Name,
-					Slug:   strconv.Itoa(post.ID),
-					Geo: spatial.Point{
-						Lat: post.Geo.Lat,
-						Lon: post.Geo.Lon,
-					},
-				},
-				Rows: obss,
+				PostID: postID,
+				Rows:   obss,
 			})
 		}
 	}
@@ -211,7 +220,7 @@ func (co *collector) update() []data.Measure {
 func (co *collector) collect() {
 	for {
 		rows := co.update()
-		go co.sender.Enqueue(rows)
+		go co.store.Enqueue(rows)
 		log.Info("cityair updated")
 		time.Sleep(5 * time.Minute)
 	}
@@ -225,7 +234,7 @@ type Settings struct {
 func Start(sender *db.Storage, set Settings) {
 	co := &collector{
 		client: client.NewProxied(),
-		sender: sender,
+		store:  sender,
 		sched:  nil,
 	}
 	co.client.SetHeader("Authorization", "Bearer "+set.Token)

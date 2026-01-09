@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hg/airmon/data"
+	"github.com/hg/airmon/db"
 )
 
 type temperature struct {
@@ -14,18 +15,24 @@ type temperature struct {
 	Temperature float32 `json:"temp"`
 }
 
-func ParseTemp(raw []byte) ([]data.Measure, error) {
+func ParseTemp(st *db.Storage, raw []byte) ([]data.Measure, error) {
 	var ms temperature
 	if err := json.Unmarshal(raw, &ms); err != nil {
 		return nil, err
 	}
+
+	postID, err := st.GetPost(data.Post{
+		Source: data.Custom,
+		Name:   ms.Device,
+		Slug:   ms.Device,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	rows := []data.Measure{
 		{
-			Post: data.Post{
-				Source: data.Custom,
-				Name:   ms.Device,
-				Slug:   ms.Device,
-			},
+			PostID: postID,
 			Rows: []data.Observation{
 				{
 					Date: time.Unix(ms.Time, 0),

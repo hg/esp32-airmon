@@ -24,13 +24,8 @@ func (st *Storage) save(mss []data.Measure) {
 	subToID := make(map[string]int)
 
 	for _, ms := range mss {
-		postID, err := st.getPost(ms.Post)
-		if err != nil {
-			log.Error("unable to get post", "error", err)
-			continue
-		}
 		for _, row := range ms.Rows {
-			obsID, err := st.getObservation(postID, row.Date)
+			obsID, err := st.getObservation(ms.PostID, row.Date)
 			if err != nil {
 				log.Error("unable to get observation", "error", err)
 				continue
@@ -68,7 +63,6 @@ func (st *Storage) receive() {
 				}
 			}
 			log.Info("saved data",
-				"source", mss[0].Post.Source,
 				"measures", len(mss),
 				"observations", observations,
 				"levels", levels,

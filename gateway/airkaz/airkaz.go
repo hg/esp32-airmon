@@ -56,7 +56,7 @@ func (co *collector) load() ([]measurement, error) {
 	return mss, err
 }
 
-func (ms *measurement) convert() data.Measure {
+func (ms *measurement) convert(postID data.PostID) data.Measure {
 	var level []data.Level
 
 	add := func(sub, unit string, val *float32) {
@@ -80,16 +80,7 @@ func (ms *measurement) convert() data.Measure {
 	}
 
 	return data.Measure{
-		Post: data.Post{
-			Source: data.Airkaz,
-			Name:   ms.Name,
-			Slug:   strconv.FormatInt(ms.PostID, 10),
-			City:   ms.City,
-			Geo: spatial.Point{
-				Lat: ms.Lat,
-				Lon: ms.Lng,
-			},
-		},
+		PostID: postID,
 		Rows: []data.Observation{
 			{
 				Date:  ms.Date.Time,
@@ -118,7 +109,23 @@ func (co *collector) update() error {
 		if ms.Date.After(now) {
 			ms.Date.Time = ms.Date.Add(-time.Hour)
 		}
-		if row := ms.convert(); len(row.Rows) > 0 {
+
+		postID, err := co.sender.GetPost(data.Post{
+			Source: data.Airkaz,
+			Name:   ms.Name,
+			Slug:   strconv.FormatInt(ms.PostID, 10),
+			City:   ms.City,
+			Geo: spatial.Point{
+				Lat: ms.Lat,
+				Lon: ms.Lng,
+			},
+		})
+		if err != nil {
+			log.Error("unable to find post", "error", err)
+			continue
+		}
+
+		if row := ms.convert(postID); len(row.Rows) > 0 {
 			rows = append(rows, row)
 		}
 	}

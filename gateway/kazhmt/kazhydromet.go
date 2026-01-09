@@ -97,6 +97,24 @@ func (co *collector) update() ([]data.Measure, error) {
 			continue
 		}
 
+		postID, err := co.sender.GetPost(data.Post{
+			Source: data.Kazhydromet,
+			Name:   stat.NameRu,
+			// source likes reusing IDs for unrelated posts
+			Slug:    fmt.Sprintf("%s_%d", stat.NameRu, stat.ID),
+			City:    stat.CityRu,
+			Address: stat.AddressRu,
+			Geo: spatial.Point{
+				Lat: stat.Latitude,
+				Lon: stat.Longitude,
+			},
+		})
+
+		if err != nil {
+			log.Error("unable to find post", "error", err)
+			continue
+		}
+
 		var rows []data.Observation
 
 		for _, avg := range statAvgs {
@@ -117,19 +135,8 @@ func (co *collector) update() ([]data.Measure, error) {
 		}
 
 		result = append(result, data.Measure{
-			Post: data.Post{
-				Source: data.Kazhydromet,
-				Name:   stat.NameRu,
-				// source likes reusing IDs for unrelated posts
-				Slug:    fmt.Sprintf("%s_%d", stat.NameRu, stat.ID),
-				City:    stat.CityRu,
-				Address: stat.AddressRu,
-				Geo: spatial.Point{
-					Lat: stat.Latitude,
-					Lon: stat.Longitude,
-				},
-			},
-			Rows: rows,
+			PostID: postID,
+			Rows:   rows,
 		})
 	}
 

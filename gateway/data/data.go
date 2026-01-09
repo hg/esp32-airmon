@@ -35,7 +35,9 @@ type Observation struct {
 	Level []Level
 }
 
+type PostID int
+
 type Measure struct {
-	Post Post
-	Rows []Observation
+	PostID PostID
+	Rows   []Observation
 }

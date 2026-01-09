@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hg/airmon/data"
+	"github.com/hg/airmon/db"
 )
 
 type co2 struct {
@@ -14,18 +15,24 @@ type co2 struct {
 	Co2    float32 `json:"co2"`
 }
 
-func ParseCO2(raw []byte) ([]data.Measure, error) {
+func ParseCO2(st *db.Storage, raw []byte) ([]data.Measure, error) {
 	var ms co2
 	if err := json.Unmarshal(raw, &ms); err != nil {
 		return nil, err
 	}
+
+	postID, err := st.GetPost(data.Post{
+		Source: data.Custom,
+		Name:   ms.Device,
+		Slug:   ms.Device,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	rows := []data.Measure{
 		{
-			Post: data.Post{
-				Source: data.Custom,
-				Name:   ms.Device,
-				Slug:   ms.Device,
-			},
+			PostID: postID,
 			Rows: []data.Observation{
 				{
 					Date: time.Unix(ms.Time, 0),

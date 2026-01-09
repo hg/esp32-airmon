@@ -49,7 +49,7 @@ type connHandler struct {
 	sender *db.Storage
 }
 
-type mapper func(data []byte) ([]data.Measure, error)
+type mapper func(st *db.Storage, data []byte) ([]data.Measure, error)
 
 type topic struct {
 	topic  string
@@ -62,15 +62,15 @@ var topics = []*topic{
 	{"meas/co2", mon.ParseCO2},
 }
 
-func subscribe(t *topic, client mqtt.Client, sender *db.Storage) {
+func subscribe(t *topic, client mqtt.Client, st *db.Storage) {
 	token := client.Subscribe(t.topic, 0, func(_ mqtt.Client, msg mqtt.Message) {
 		raw := msg.Payload()
 		if len(raw) == 0 {
 			log.Error("empty message", "id", msg.MessageID())
 			return
 		}
-		if mss, err := t.mapper(raw); err == nil {
-			go sender.Enqueue(mss)
+		if mss, err := t.mapper(st, raw); err == nil {
+			go st.Enqueue(mss)
 		} else {
 			log.Error("could not parse data",
 				"topic", t.topic,
