@@ -33,7 +33,7 @@ type geo struct {
 	Lon float32 `json:"longitude"`
 }
 
-type post struct {
+type station struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 	Geo  geo    `json:"geo"`
@@ -43,8 +43,8 @@ type meta struct {
 	Units map[string]string `json:"units"`
 }
 
-func (fu *schedule) schedule() {
-	fu.nextFull = time.Now().Add(3 * time.Hour)
+func (sc *schedule) schedule() {
+	sc.nextFull = time.Now().Add(3 * time.Hour)
 }
 
 func (g *geo) toPoint() spatial.Point {
@@ -84,51 +84,64 @@ func toFloat(raw any) (float32, bool) {
 	}
 }
 
-func (co *collector) loadPosts() []post {
-	var posts []post
+type stations struct {
+	near []station
+	far  []station
+}
 
-	if err := co.client.GetJSON(base+"/posts", &posts); err != nil {
+func (co *collector) loadPosts() stations {
+	var all []station
+
+	if err := co.client.GetJSON(base+"/posts", &all); err != nil {
 		log.Error("unable to load posts", "error", err)
-		return nil
+		return stations{}
 	}
 
-	log.Info("loaded posts", "count", len(posts))
+	if co.sched == nil {
+		log.Info("loaded posts", "all", len(all))
+		return stations{near: all, far: nil}
+	}
+
+	full := co.sched.isFullUpdate()
+
+	posts := stations{
+		near: make([]station, 0, len(all)),
+		far:  make([]station, 0, len(all)),
+	}
+
+	for _, post := range all {
+		dist := spatial.Haversine(co.sched.center, post.Geo.toPoint())
+		if dist > 100_000 {
+			if full {
+				posts.far = append(posts.far, post)
+			} else {
+				log.Debug("skipping remote post", "id", post.ID, "dist", dist)
+			}
+		} else {
+			posts.near = append(posts.near, post)
+		}
+	}
+
+	log.Info("loaded posts",
+		"near", len(posts.near),
+		"far", len(posts.far))
+
 	return posts
 }
 
-func (co *collector) isPartialUpdate() bool {
-	if co.sched == nil {
-		return false // no coordinates, poll everything
-	}
-	full := co.sched.nextFull.Before(time.Now())
+func (sc *schedule) isFullUpdate() bool {
+	full := sc.nextFull.Before(time.Now())
 	if full {
-		co.sched.schedule()
+		sc.schedule()
 		log.Info("full update: also fetching data for remote stations")
 	}
-	return !full
+	return full
 }
 
-func (co *collector) update() []data.Measure {
-	posts := co.loadPosts()
-	if len(posts) == 0 {
-		return nil
-	}
-
+func (co *collector) update(posts []station) {
 	var result []data.Measure
 
-	partial := co.isPartialUpdate()
-
 	for _, post := range posts {
-		if partial {
-			dist := spatial.Haversine(co.sched.center, post.Geo.toPoint())
-			if dist > 100_000 {
-				log.Debug("skipping remote post",
-					"id", post.ID,
-					"distance", dist)
-				continue
-			}
-		}
-
 		postID, err := co.store.GetPost(data.Post{
 			Source: data.CityAir,
 			Name:   post.Name,
@@ -146,11 +159,13 @@ func (co *collector) update() []data.Measure {
 
 		since, err := co.store.GetLastAt(postID)
 
-		if err != nil || since.Equal(db.Epoch) {
+		if err != nil || since.IsZero() {
 			if err != nil {
 				log.Error("unable to get last measurement", "error", err)
 			}
-			since = time.Now().Add(-12 * time.Hour)
+			since = time.Now().UTC().Add(-12 * time.Hour)
+		} else {
+			since = since.UTC().Add(-time.Hour)
 		}
 
 		uri := fmt.Sprintf("%s/posts/%d/measurements?interval=5m&date__gt=%s",
@@ -214,13 +229,18 @@ func (co *collector) update() []data.Measure {
 		}
 	}
 
-	return result
+	go co.store.Enqueue(result)
 }
 
 func (co *collector) collect() {
 	for {
-		rows := co.update()
-		go co.store.Enqueue(rows)
+		posts := co.loadPosts()
+		if len(posts.near) > 0 {
+			co.update(posts.near)
+		}
+		if len(posts.far) > 0 {
+			go co.update(posts.far)
+		}
 		log.Info("cityair updated")
 		time.Sleep(5 * time.Minute)
 	}

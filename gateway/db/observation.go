@@ -42,13 +42,11 @@ FROM air.observation
 WHERE post_id = $1
 `
 
-var Epoch = time.Unix(0, 0)
-
 func (st *Storage) GetLastAt(postID data.PostID) (time.Time, error) {
 	var lastAt time.Time
 	err := st.con.QueryRow(st.ctx, sqlGetLastAt, postID).Scan(&lastAt)
 	if err == pgx.ErrNoRows {
-		return Epoch, nil
+		return time.Time{}, nil
 	}
 	return lastAt, err
 }
