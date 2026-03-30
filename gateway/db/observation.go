@@ -37,7 +37,7 @@ func (st *Storage) getObservation(postID data.PostID, date time.Time) (int, erro
 }
 
 const sqlGetLastAt = `
-SELECT MAX(measured_at)
+SELECT COALESCE(MAX(measured_at), NOW() - INTERVAL '1 day')
 FROM air.observation
 WHERE post_id = $1
 `
